@@ -177,6 +177,9 @@ class Harness:
         """Route a message and answer it if it's a question. Read-only for every analysis,
         so it can run while one is in progress. A new analysis is returned, not started."""
         try:
+            # Routing and answers happen before any run's trace exists; log them too, so a
+            # provider refusing at this point is on record.
+            self.gw.tracer = jsonl_tracer(self.drive.path("trace/requests.jsonl"))
             active = self.active_analyses(sender)
             routed = self.router.run(self._person(sender), text, active=active)
             intent = routed["intent"]

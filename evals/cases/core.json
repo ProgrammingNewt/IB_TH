@@ -1,0 +1,42 @@
+[
+  {
+    "name": "planted",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "upload_rerun": true,
+    "expect": {
+      "first_round": ["contradiction:c-readings-P2", "slot:threshold"],
+      "asked_to": {"contradiction:c-readings-P2": "B", "slot:threshold": "A"},
+      "not_asked": ["slot:compound", "slot:readout", "slot:comparator"],
+      "verdict": "not a hit",
+      "run_status": "done",
+      "plates_used": ["raw/readings.xlsx:P1", "raw/readings_rerun.xlsx:P3"],
+      "findings_contain": ["P2", "What changed since the last run"],
+      "findings_exclude": ["\\bcauses?\\b", "doesn't work", "ineffective"]
+    }
+  },
+  {
+    "name": "clean",
+    "scenario": "clean",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "expect": {
+      "first_round": ["slot:threshold"],
+      "not_asked": ["contradiction"],
+      "verdict": "hit",
+      "run_status": "done",
+      "plates_used": ["raw/readings.xlsx:P1", "raw/readings.xlsx:P2"]
+    }
+  },
+  {
+    "name": "refusing_provider",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "refuse_provider_1": true,
+    "expect": {
+      "fell_back": true,
+      "verdict": "not a hit",
+      "run_status": "done",
+      "plates_used": ["raw/readings.xlsx:P1"]
+    }
+  }
+]
