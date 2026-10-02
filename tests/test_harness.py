@@ -725,3 +725,32 @@ def test_the_last_answer_asks_for_a_resume_instead_of_running_it(setup):
     out = h.answer(qid, "B", "exclude", resume=False)
     assert out["needs_resume"] == "r-001"
     assert h._load("runs", "r-001")["status"] == "waiting"              # not resumed here
+
+
+
+def test_findings_formatting(setup):
+    from harness.harness import _fmt_number, _without_approval_status
+    assert _fmt_number("drop", 0.0238) == "2.4% (0.0238)"
+    assert _fmt_number("p", 0.632) == "0.632" and _fmt_number("p", 1.000165e-05) == "1e-05"
+    assert _fmt_number("mean_compound_pct_of_vehicle", 97.62) == "97.6%"
+    assert _without_approval_status(
+        "Rerun ABC-12 at 72 h with vehicle on the same plate (plan drafted and awaiting scientist approval)."
+    ) == "Rerun ABC-12 at 72 h with vehicle on the same plate."
+    assert _without_approval_status("Re-run at 72 h. The plan is pending your approval.") == "Re-run at 72 h."
+    h, _, _, _ = setup
+    goal, _ = _confirmed_goal(h)
+    h.drive.add_fact({"statement": "Exclude plate P2 from the analysis", "confirmed_by": "B"})
+    goal.update(last_run="r-001", last_draft={"verdict": "not a hit", "summary": "s", "next_step":
+                "Re-run (awaiting approval).", "numbers": [{"label": "Drop", "value": 0.0238,
+                                                           "source": "derived/stats.json", "key": "drop"}]})
+    md = h._render(goal)
+    assert "| Drop | 2.4% (0.0238) |" in md
+    assert "- Exclude plate P2 from the analysis (confirmed by Ben Okafor)\n" in md + "\n"
+    assert "f-0" not in md and "awaiting" not in md
+
+
+def test_reviewer_sends_back_a_draft_that_states_approval_status():
+    from harness.agents.reviewer import code_review
+    problems = code_review({"summary": "Not a hit.", "next_step": "Re-run (plan awaiting scientist approval).",
+                            "numbers": []}, lambda *a: None)
+    assert any("approval status" in p for p in problems)

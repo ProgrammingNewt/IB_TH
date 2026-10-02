@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from typing import Any
 
 from harness.agents.extractor import llm_protocol_extractor
@@ -875,10 +876,11 @@ class Harness:
                  (f" (threshold: {_slot_text('threshold', th)}, confirmed by the requester)" if th else ""), "",
                  "## Evidence [raw]", "", "| What | Value | Source |", "|---|---|---|"]
         for n in d.get("numbers", []):
-            lines.append(f"| {n['label']} | {n['value']} | `{n['source']}` → `{n['key']}` |")
+            lines.append(f"| {n['label']} | {_fmt_number(n['key'], n['value'])} | "
+                         f"`{n['source']}` → `{n['key']}` |")
         lines += ["", "## Decisions the team made", ""]
         for f in self.drive.facts():
-            lines.append(f"- {f['statement']} (confirmed by {name(f['confirmed_by'])}, {f['id']})")
+            lines.append(f"- {f['statement']} (confirmed by {name(f['confirmed_by'])})")
         if not self.drive.facts():
             lines.append("- None needed.")
         lines += ["", "## Interpretation [inferred]", "", d["summary"], ""]
@@ -891,7 +893,7 @@ class Harness:
                 if n["label"] in before and before[n["label"]] != n["value"]:
                     lines.append(f"- {n['label']}: {before[n['label']]} → {n['value']}")
             lines.append("")
-        lines += ["## Next step", "", d.get("next_step", "")]
+        lines += ["## Next step", "", _without_approval_status(d.get("next_step", ""))]
         if d.get("plan"):
             meta = self.drive.read_json(d["plan"].replace(".csv", ".json"), {}) or {}
             lines.append(f"\nPlate plan: `{d['plan']}` ({meta.get('status', 'unknown')})")
@@ -938,6 +940,32 @@ def _renamed(goal: dict, except_slot: str | None = None) -> dict[str, str]:
                 and _norm(asked) != _norm(now):
             out[asked] = now
     return out
+
+
+def _fmt_number(key: str, value) -> str:
+    """2.4% (0.0238) for a drop, 0.632 for a p-value, 97.6% for a percentage of vehicle."""
+    if not isinstance(value, (int, float)):
+        return str(value)
+    k = str(key).lower()
+    if k.endswith("drop") or k == "drop":
+        return f"{value:.1%} ({value:g})"
+    if k == "p" or k.endswith("p_value") or k.endswith(".p"):
+        return f"{value:.3g}"
+    if "pct" in k or "percent" in k:
+        return f"{value:.1f}%"
+    return f"{value:g}"
+
+
+APPROVAL_IN_BRACKETS = re.compile(r"\s*\((?=[^)]*\b(?:approv\w*|pending|awaiting)\b)[^)]*\)",
+                                  re.IGNORECASE)
+APPROVAL_SENTENCE = re.compile(r"(?:^|(?<=[.!?]))\s*[^.!?]*\b(?:awaiting|pending)\b[^.!?]*\bapproval\b[^.!?]*[.!?]?",
+                               re.IGNORECASE)
+
+
+def _without_approval_status(text: str) -> str:
+    """A plan's approval status is shown live from its file, never from the draft's text,
+    which was written before anyone approved anything."""
+    return APPROVAL_SENTENCE.sub("", APPROVAL_IN_BRACKETS.sub("", text)).strip()
 
 
 def _norm(name: str) -> str:

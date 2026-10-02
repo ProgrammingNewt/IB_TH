@@ -37,6 +37,12 @@ def code_review(draft: dict, read_json: Callable, compound: str | None = None) -
                 abs(actual - n["value"]) > max(1e-3, abs(actual) * 0.01):
             problems.append(f"number '{n.get('label')}' is {n.get('value')} but {src}:{key} is {actual}")
 
+    status = re.search(r"\b(?:awaiting|pending|approved|rejected)\b[^.]*\bapproval\b|"
+                       r"\bapproval\b[^.]*\b(?:pending|awaiting)\b",
+                       " ".join([draft.get("summary", ""), draft.get("next_step", "")]), re.IGNORECASE)
+    if status:
+        problems.append(f"don't state a plan's approval status ('{status.group(0)}'); "
+                        "the findings show it live from the plan's file")
     text = " ".join([draft.get("summary", ""), draft.get("next_step", "")] +
                     [x.get("note", "") for x in draft.get("notes_for_owners", [])]).lower()
     patterns = list(OVERCLAIMS)
