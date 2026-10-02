@@ -712,10 +712,12 @@ class Harness:
             meta.update(goal_id=goal["id"], run_id=run["id"], approver=goal["requester"])
             meta["purpose"] = self._plan_purpose(meta)
             self.drive.write_json(meta_rel, meta)
+            what = "replacement plate" if meta["kind"] == "rerun" else "dose-response plate"
             q = self._new_question(run, goal, to=goal["requester"], cc=[],
                                    about=f"approval:{result['plan']}",
-                                   text=f"Approve this {meta['kind']} plate plan ({meta['wells']} wells, "
-                                        f"{meta['vehicle_wells']} vehicle wells on the plate)?",
+                                   text=f"Approve this {what} ({meta['wells']} wells, {meta['vehicle_wells']} "
+                                        f"vehicle wells on the plate)? What it's for: {meta['purpose']} "
+                                        f"Design: {meta.get('design', '')}",
                                    choices=[{"key": "approve", "label": "Approve"},
                                             {"key": "reject", "label": "Reject"}])
             result["approval_question"] = q["id"]

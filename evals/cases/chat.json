@@ -1,0 +1,63 @@
+[
+  {
+    "name": "chat_ana_waiting",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "chat": [
+      {"who": "A", "text": "why is Ben being asked?", "when": "waiting"},
+      {"who": "A", "text": "what will the new plate look like?", "when": "waiting"},
+      {"who": "A", "text": "is the analysis only using P1?", "when": "waiting"}
+    ],
+    "expect": {
+      "max_goals": 1,
+      "chat_intent": {"0": "question_about_run", "1": "question_about_run", "2": "question_about_run"},
+      "chat_reply_contains": {"0": ["P2"], "2": ["P1"]}
+    }
+  },
+  {
+    "name": "chat_ben_chen_waiting",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "chat": [
+      {"who": "B", "text": "what happens if I keep P2?", "when": "waiting"},
+      {"who": "C", "text": "is my notebook wrong?", "when": "waiting"},
+      {"who": "A", "text": "what did Ben decide about P2?", "when": "done"}
+    ],
+    "expect": {
+      "max_goals": 1,
+      "chat_intent": {"0": "question_about_run"},
+      "chat_reply_contains": {"0": ["P2"]}
+    }
+  },
+  {
+    "name": "chat_correction_and_new_compound",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "chat": [
+      {"who": "A", "text": "actually make the threshold 10%", "when": "waiting"},
+      {"who": "A", "text": "is XYZ-99 a hit?", "when": "waiting"},
+      {"who": "A", "text": "what threshold is being used?", "when": "done"}
+    ],
+    "expect": {
+      "max_goals": 1,
+      "chat_intent": {"1": "new_analysis"},
+      "verdict": "not a hit"
+    }
+  },
+  {
+    "name": "chat_fallback_provider",
+    "scenario": "planted_batch_issue",
+    "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+    "refuse_provider_1": true,
+    "chat": [
+      {"who": "A", "text": "why is Ben being asked?", "when": "waiting"},
+      {"who": "A", "text": "so is ABC-12 a hit?", "when": "done"}
+    ],
+    "expect": {
+      "max_goals": 1,
+      "fell_back": true,
+      "chat_intent": {"0": "question_about_run", "1": "question_about_findings"},
+      "chat_reply_contains": {"0": ["P2"]}
+    }
+  }
+]

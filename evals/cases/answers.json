@@ -1,0 +1,23 @@
+[
+  {"name": "keep_p2", "scenario": "planted_batch_issue",
+   "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+   "answers": {"contradiction": "keep"},
+   "expect": {"verdict": "not a hit", "run_status": "done"}},
+  {"name": "threshold_gibberish", "scenario": "planted_batch_issue",
+   "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+   "answers": {"threshold": "other:asdf"},
+   "expect": {"verdict": "not a hit"}},
+  {"name": "threshold_contradictory", "scenario": "planted_batch_issue",
+   "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+   "answers": {"threshold": "other:at least 30% but also any drop counts"},
+   "expect": {"verdict": "not a hit"}},
+  {"name": "wrong_person_first", "scenario": "planted_batch_issue",
+   "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+   "answers": {"wrong_person_first": ["contradiction"], "contradiction": "keep"},
+   "expect": {"verdict": "not a hit", "run_status": "done"}},
+  {"name": "reject_and_freetext", "scenario": "planted_batch_issue",
+   "request": {"who": "A", "text": "Is ABC-12 a hit?"},
+   "answers": {"contradiction": "other:it was a mistake, drop it", "approval": "reject"},
+   "upload_rerun": true,
+   "expect": {"verdict": "not a hit"}}
+]
