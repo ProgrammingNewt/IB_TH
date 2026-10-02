@@ -72,10 +72,10 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
              "choices": [{"label": "30% drop, p < 0.05", "value": THRESHOLD},
                          {"label": "50% drop, p < 0.01", "value": {"min_drop": 0.5, "max_p": 0.01}}]},
         ]})),                                                                         # planner
-        say(message="Hi Ben, plate P2 ran 48 h with no vehicle. Should we exclude it, or keep it?"),  # qa ask
+        say(message="Ben, should we exclude plate P2, or keep it? It ran 48 h with no vehicle."),  # qa ask
         say(message="Ana, Ben was asked whether to exclude plate P2."),                   # qa copy
         say(labels=["At least a 30% drop, p < 0.05", "At least a 50% drop, p < 0.01"]),  # qa labels
-        say(message="Hi Ana, what drop should count as a hit?"),                          # qa ask
+        say(message="Ana, what drop should count as a hit? The protocol doesn't say."),  # qa ask
     ]
     out = h.message("A", "Is ABC-12 a hit?")
     assert out["status"] == "waiting"
@@ -112,7 +112,7 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
         tools(("filter_dataset", {}),
               ("run_stats", {"compound": "ABC-12", "min_drop": 0.3, "max_p": 0.05})),
         tools(("plan_followup_plate", {"kind": "rerun", "compound": "ABC-12"})),
-        say(message="Hi Ana, do you approve this re-run plate?"),                      # qa (approval)
+        say(message="Ana, do you approve this re-run plate? It puts vehicle on the plate."),                      # qa (approval)
         conclusion(**stats_run1, plan="findings/plans/plan-001-rerun.csv"),
         say(**{"pass": True, "problems": []}),                                          # reviewer
         say(message="Chen, there's a note on analysis.ipynb about plate P2."),         # qa note
@@ -288,13 +288,13 @@ def test_a_question_must_name_the_decision(setup):
         call(h.drive, s, t, {"path": p})
     call(h.drive, s, "check_consistency")
     run = {"id": "r-001", "goal_id": "g-001", "status": "done", "messages": [], "pending": None}
-    client.replies += [say(message="Hi Ben, plate P2 ran 48 h. How should we handle P2?"),
-                       say(message="Hi Ben, plate P2 ran 48 h with no vehicle wells. Should we "
-                                   "exclude it from the analysis, or keep it?"),
+    client.replies += [say(message="Ben, how should we handle P2? It ran 48 h."),
+                       say(message="Ben, should we exclude plate P2 from the analysis, or keep it? "
+                                   "It ran 48 h with no vehicle wells."),
                        say(message="Ana, Ben was asked about plate P2.")]
     [qid], _ = h._create_questions(run, goal, {"questions": [
         {"about": "contradiction:c-readings-P2", "text": "How should we handle P2?"}]})
-    assert "exclude it from the analysis, or keep it?" in h._load("questions", qid)["message"]
+    assert "exclude plate P2 from the analysis, or keep it?" in h._load("questions", qid)["message"]
     retry = client.calls[1]["messages"][-1]["content"]
     assert "must name the options: exclude, keep" in retry
 
@@ -443,3 +443,19 @@ def test_a_router_that_keeps_correcting_leaves_the_term_unclear(setup):
     r = call(h.drive, s, "parse_xlsx", {"path": "raw/readings.xlsx"})
     h._after_tool(run, goal, "parse_xlsx", {"path": "raw/readings.xlsx"}, r)
     assert goal["ungrounded"]["compound"] == {"asked": "(unclear in the request)", "known": ["ABC-12"]}
+
+
+
+@pytest.mark.parametrize("message,ok", [
+    ("Hi Ana, I'm asking because the protocol doesn't state a hit criterion. Should we use 30%?", False),
+    ("Hi Ana, what should count as a hit: 30% with p < 0.05? The protocol doesn't say.", True),
+    ("Ben, should we exclude plate P2, or keep it? It ran 48 h.", True),
+    ("Ben — plate P2 ran 48 h. Exclude or keep?", False),
+])
+def test_the_question_comes_first(setup, message, ok):
+    h, client, _, _ = setup
+    good = "Ana, should we exclude it, or keep it? Fallback reason."
+    client.replies += [say(message=message), say(message=good)]
+    out = h.qa.ask(h._person("A"), "q", {}, options=["Exclude", "Keep"],
+                   must_mention=[] if "hit" in message else ["exclude", "keep"])
+    assert out == (message if ok else good)

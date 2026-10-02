@@ -22,6 +22,13 @@ def _message(out: dict) -> str | None:
     return None if isinstance(m, str) and m.strip() else "Missing a non-empty \"message\"."
 
 
+def _first_sentence(message: str) -> str:
+    """The first sentence, ignoring a greeting such as "Hi Ana," or "Ben —"."""
+    import re
+    m = re.search(r"[.?!](?=\s|$)", message)
+    return (message[:m.end()] if m else message).strip()
+
+
 def _parsed_value(out: dict) -> str | None:
     return None if "value" in out else "Missing \"value\" (use null if the reply doesn't say)."
 
@@ -134,8 +141,10 @@ class QA:
             if problem:
                 return problem
             text = out["message"].lower()
-            if "?" not in text:
-                return "End the message with the question itself."
+            first = _first_sentence(out["message"])
+            if not first.endswith("?"):
+                return ("Ask the question itself in the first sentence (it must end with '?'), "
+                        f"then give the reason. Your first sentence was: {first!r}")
             missing = [w for w in must_mention if w.lower() not in text]
             if missing:
                 return f"The question must name the options: {', '.join(missing)}."
