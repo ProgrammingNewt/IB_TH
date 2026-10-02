@@ -166,6 +166,7 @@ class Harness:
             self._say(pid, "understood", about=f" of {compound}" if compound else "")
             goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
                     "slots": dict(routed["slots"]), "asked_slots": dict(routed["slots"]),
+                    "unclear_slots": list(routed.get("unclear", [])),
                     "status": "open", "runs": [], "history": [], "created": _now()}
             self._save("goals", goal)
             t = self._load("progress", pid)
@@ -459,6 +460,12 @@ class Harness:
         known, terms = self._known_values(), self._match_terms()
         notes = []
         goal["ungrounded"] = {}
+        for slot in goal.get("unclear_slots", []):
+            # The request named this, but in a way the Router couldn't copy: ask, don't guess.
+            if slot not in goal.get("confirmed_slots", []) and known.get(slot):
+                goal["ungrounded"][slot] = {"asked": "(unclear in the request)", "known": known[slot]}
+                notes.append(f"The {slot} in the request isn't clear. Ask the requester which they "
+                             f"mean (about='slot:{slot}'). Don't assume it's {', '.join(known[slot])}.")
         for slot in goal.get("asked_slots", {}):
             asked = goal["slots"].get(slot)
             options, names = known.get(slot) or [], terms.get(slot) or []

@@ -408,3 +408,38 @@ def test_what_the_requester_meant_is_asked_first_and_alone(setup):
     comparator = next(h._load("questions", q) for q in created
                       if h._load("questions", q)["about"] == "slot:comparator")
     assert [c["label"] for c in comparator["choices"]] == ["vehicle", "Something else (type it)"]
+
+
+
+@pytest.mark.parametrize("typed", ["acb 12", "ABC-21", "abc 13", "ABD 12"])
+def test_the_router_may_not_correct_what_the_requester_typed(setup, typed):
+    """A model that 'fixes' a typo to the data's name is sent back; the term reaches the
+    data check as typed, doesn't match, and the requester is asked."""
+    h, client, _, _ = setup
+    client.replies += [say(intent="new_analysis", slots={"compound": "ABC-12"}),   # "corrected"
+                       say(intent="new_analysis", slots={"compound": typed})]      # as typed
+    routed = h.router.run(h._person("A"), f"is {typed} a hit?")
+    assert routed["slots"] == {"compound": typed} and routed["unclear"] == []
+    assert "aren't in the message as written: compound 'ABC-12'" in client.calls[1]["messages"][-1]["content"]
+
+    goal, _, results = _goal_after_parsing(h, {"compound": typed})
+    assert goal["ungrounded"]["compound"]["asked"] == typed
+    assert "about='slot:compound'" in results[-1]["goal_check"]
+
+
+def test_a_router_that_keeps_correcting_leaves_the_term_unclear(setup):
+    h, client, _, _ = setup
+    client.replies += [say(intent="new_analysis", slots={"compound": "ABC-12"}),
+                       say(intent="new_analysis", slots={"compound": "ABC-12"})]
+    routed = h.router.run(h._person("A"), "is acb 12 a hit?")
+    assert routed["slots"] == {} and routed["unclear"] == ["compound"]
+    goal = {"id": "g-001", "requester": "A", "question": "is acb 12 a hit?", "slots": {},
+            "asked_slots": {}, "unclear_slots": ["compound"], "status": "open", "runs": [], "history": []}
+    h._save("goals", goal)
+    run = {"id": "r-001", "goal_id": "g-001", "progress_id": None}
+    from harness.state import RunState
+    from harness.tools.registry import call
+    s = RunState(goal=goal["slots"])
+    r = call(h.drive, s, "parse_xlsx", {"path": "raw/readings.xlsx"})
+    h._after_tool(run, goal, "parse_xlsx", {"path": "raw/readings.xlsx"}, r)
+    assert goal["ungrounded"]["compound"] == {"asked": "(unclear in the request)", "known": ["ABC-12"]}
