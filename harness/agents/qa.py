@@ -49,6 +49,9 @@ def _labels_for(values: list[dict]) -> Callable[[dict], str | None]:
 
 
 # Progress updates, shown live while a request runs. Fixed and instant: no model call.
+# Milestones are what the reply keeps showing; the rest only appear as the current status.
+MILESTONES = {"understood", "not_analysis", "uploaded", "reevaluating", "waiting",
+              "answered_still_waiting", "all_answered", "revising", "done", "failed"}
 PROGRESS = {
     "received": "Got it. Working on: {text}",
     "understood": "Understood: a new analysis{about}.",
@@ -70,7 +73,8 @@ PROGRESS = {
     "load_skill": "Loading the {name} procedure",
     "asking": "Found something to check with the team. Writing the questions",
     "waiting": "Waiting for answers: {who}",
-    "answered": "{name} answered. Continuing.",
+    "answered_still_waiting": "{name} answered. Still waiting for {who}.",
+    "all_answered": "{name} answered. All answers are in, continuing.",
     "reviewing": "Reviewing the conclusion before anyone sees it",
     "revising": "The review sent it back. Revising.",
     "writing": "Writing up the findings",

@@ -163,8 +163,13 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert steps[1] == "Understood: a new analysis of ABC-12."
     assert "Reading the protocol (raw/protocol.pdf)" in steps
     assert "Waiting for answers: Ben Okafor on plate P2, Ana Ruiz on the threshold" in steps
-    assert "Ben Okafor answered. Continuing." in steps and "Ana Ruiz answered. Continuing." in steps
-    assert steps.index("Running the statistics") > steps.index("Ana Ruiz answered. Continuing.")
+    # Ben answered first, so the thread still waits for Ana; only her answer resumes it.
+    assert "Ben Okafor answered. Still waiting for Ana Ruiz on the threshold." in steps
+    assert "Ana Ruiz answered. All answers are in, continuing." in steps
+    assert steps.index("Running the statistics") > steps.index("Ana Ruiz answered. All answers are in, continuing.")
+    milestones = [x["text"] for x in first["steps"] if x["milestone"]]
+    assert "Reading the protocol (raw/protocol.pdf)" not in milestones
+    assert milestones[-1] == "Done: not a hit. The findings are in the Findings tab."
     assert steps[-1] == "Done: not a hit. The findings are in the Findings tab."
     assert first["state"] == "done" and first["goal"] == "g-001"
     # Ben's upload started its own thread, which Ana sees because it's her goal.

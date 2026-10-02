@@ -1,5 +1,4 @@
 """The Lab page: what one scientist sees. Pick who you are in the sidebar (or ?as=B)."""
-import datetime as dt
 import json
 import tempfile
 import time
@@ -151,11 +150,6 @@ tab_ask, tab_q, tab_drive, tab_findings, tab_trace = st.tabs(
 STATUS_STATE = {"working": "running", "waiting": "running", "done": "complete", "failed": "error"}
 
 
-def _age(iso: str) -> str:
-    secs = int((dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(iso)).total_seconds())
-    return f"{secs}s" if secs < 120 else f"{secs // 60} min"
-
-
 @st.fragment(run_every=1)
 def conversation():
     """Each request and its live reply, like a chat. Refreshes every second on its own."""
@@ -168,13 +162,12 @@ def conversation():
             who = "" if by_me else f"**{people.get(t['by'], {}).get('name', t['by'])}:** "
             st.markdown(who + ("📎 " if t["kind"] == "upload" else "") + t["text"])
         with st.chat_message("assistant", avatar="🧪"):
-            last = t["steps"][-1] if t["steps"] else {"text": "…", "at": t["started"]}
-            live = t["state"] in ("working", "waiting")
-            label = last["text"] + (f"  ·  {_age(last['at'])}" if live else "")
-            with st.status(label, state=STATUS_STATE.get(t["state"], "running"),
-                           expanded=live and t is threads[-1]):
-                for step in t["steps"]:
-                    st.markdown(f"`{step['at'][11:19]}` {step['text']}")
+            # One line, the latest status. Expanding it shows only the milestones.
+            last = t["steps"][-1]["text"] if t["steps"] else "Working…"
+            milestones = [x["text"] for x in t["steps"][:-1] if x.get("milestone", True)]
+            with st.status(last, state=STATUS_STATE.get(t["state"], "running"), expanded=False):
+                for text in milestones or ["Just started."]:
+                    st.markdown(f"- {text}")
             if t["state"] == "waiting":
                 st.caption("Whoever was asked answers in their ❓ My questions tab. "
                            "This updates as soon as they do.")
