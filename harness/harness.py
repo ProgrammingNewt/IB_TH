@@ -80,6 +80,7 @@ class Harness:
         return self.drive.read_json(f"messages/{person}.json", [])
 
     def _notify(self, person: str, kind: str, text: str, ref: str | None = None) -> None:
+        """Deliver a message to an inbox. `text` always comes from the Q&A agent."""
         if person not in self.drive.people:
             return
         box = self.inbox(person)
@@ -106,8 +107,8 @@ class Harness:
             self._notify(sender, "answer", reply)
             return {"intent": routed["intent"], "reply": reply}
         if routed["intent"] != "new_analysis":
-            reply = "I can analyse an experiment's data on this drive, or answer questions about findings."
-            self._notify(sender, "answer", reply)
+            reply = self.qa.notice("not_a_request")
+            self._notify(sender, "notice", reply)
             return {"intent": routed["intent"], "reply": reply}
 
         goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
@@ -156,8 +157,9 @@ class Harness:
                 parsed = self.qa.parse_other(q, text or "")
                 value = parsed["value"]
                 if not _valid_slot(ref, value):
-                    self._notify(by, "question", "I couldn't turn that into a threshold. Could you "
-                                 "give a minimum drop and a p-value, e.g. '30% and 0.05'?", qid)
+                    self._notify(by, "notice", self.qa.notice(
+                        "unreadable_answer", what="a threshold",
+                        example="'a 30% drop with p below 0.05'"), qid)
                     return {"recorded_as": "nothing", "reason": "couldn't parse the answer"}
             goal = self._load("goals", q["goal_id"])
             goal["slots"][ref] = value
@@ -252,8 +254,8 @@ class Harness:
         while True:
             handoff: Handoff = self.planner.run(run, state, on_tool)
             if handoff.kind == "failed":
-                self._notify(goal["requester"], "status", f"The analysis stopped: {handoff.reason}",
-                             run["id"])
+                self._notify(goal["requester"], "notice",
+                             self.qa.notice("run_stopped", reason=handoff.reason), run["id"])
                 return self._finish(run, "failed", handoff.reason)
 
             if handoff.kind == "ask":
@@ -310,7 +312,8 @@ class Harness:
         self._save("questions", q)
         self._notify(to, "question", message, q["id"])
         for person in cc:
-            self._notify(person, "fyi", f"{self._person(to)['name']} was asked: {text}", q["id"])
+            self._notify(person, "fyi", self.qa.copy(self._person(person), self._person(to), text),
+                         q["id"])
         return q
 
     def _create_questions(self, run: dict, goal: dict, args: dict) -> tuple[list[str], list[str]]:
@@ -337,8 +340,13 @@ class Harness:
                 if not choices:
                     errors.append(f"slot:{ref} needs at least one choice with a valid value")
                     continue
-                choices = [{"key": f"c{i + 1}", "label": c.get("label") or _slot_text(ref, c["value"]),
-                            "value": c["value"]} for i, c in enumerate(choices[:3])]
+                # The Q&A agent labels the buttons from the values; the Planner's own labels
+                # never reach the scientist. The fixed format is only the fallback.
+                values = [c["value"] for c in choices[:3]]
+                labels = self.qa.labels(self._person(goal["requester"]), text, values,
+                                        [_slot_text(ref, v).capitalize() for v in values])
+                choices = [{"key": f"c{i + 1}", "label": label, "value": v}
+                           for i, (label, v) in enumerate(zip(labels, values))]
                 choices.append({"key": "other", "label": "Something else (type it)", "value": None})
                 q = self._new_question(run, goal, to=goal["requester"], cc=[], about=about,
                                        text=text or f"What {ref} should we use?", choices=choices)
@@ -386,7 +394,8 @@ class Harness:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 with p.open("a") as fh:
                     fh.write(f"## {run['id']}, for {self._person(owner)['name']}\n\n{n.get('note', '')}\n\n")
-                self._notify(owner, "note", f"There's a note on {n.get('file')}: {n.get('note', '')}", rel)
+                self._notify(owner, "note", self.qa.note(self._person(owner), str(n.get("file")),
+                                                         n.get("note", "")), rel)
         self._notify(goal["requester"], "report",
                      self.qa.report(self._person(goal["requester"]), md), "findings/findings.md")
         status = "done" if review["pass"] else "done_with_problems"

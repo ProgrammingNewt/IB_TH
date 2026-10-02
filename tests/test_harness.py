@@ -72,8 +72,10 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
              "choices": [{"label": "30% drop, p < 0.05", "value": THRESHOLD},
                          {"label": "50% drop, p < 0.01", "value": {"min_drop": 0.5, "max_p": 0.01}}]},
         ]})),                                                                         # planner
-        say(message="Hi Ben, plate P2 ran 48 h with no vehicle. Should we exclude it?"),   # qa
-        say(message="Hi Ana, what drop should count as a hit?"),                          # qa
+        say(message="Hi Ben, plate P2 ran 48 h with no vehicle. Should we exclude it?"),   # qa ask
+        say(message="Ana, Ben was asked whether to exclude plate P2."),                   # qa copy
+        say(labels=["At least a 30% drop, p < 0.05", "At least a 50% drop, p < 0.01"]),  # qa labels
+        say(message="Hi Ana, what drop should count as a hit?"),                          # qa ask
     ]
     out = h.message("A", "Is ABC-12 a hit?")
     assert out["status"] == "waiting"
@@ -94,6 +96,11 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
         "compound": "ABC-12", "readout": "SA-beta-gal", "comparator": "vehicle"}
     assert [m["kind"] for m in h.inbox("B")] == ["question"]
     assert [m["kind"] for m in h.inbox("A")] == ["fyi", "question"]
+    # Every message a scientist received was written by the Q&A agent.
+    assert h.inbox("A")[0]["text"] == "Ana, Ben was asked whether to exclude plate P2."
+    assert [c["label"] for c in qs[q_threshold]["choices"]] == [
+        "At least a 30% drop, p < 0.05", "At least a 50% drop, p < 0.01",
+        "Something else (type it)"]
 
     # A can't decide about B's file. B can. The run waits for the last open question.
     assert h.answer(q_plate, "A", "exclude")["recorded_as"] == "comment"
@@ -108,6 +115,7 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
         say(message="Hi Ana, here's a re-run plate to approve."),                      # qa (approval)
         conclusion(**stats_run1, plan="findings/plans/plan-001-rerun.csv"),
         say(**{"pass": True, "problems": []}),                                          # reviewer
+        say(message="Chen, there's a note on analysis.ipynb about plate P2."),         # qa note
         say(message="Ana, ABC-12 isn't a hit once plate P2 is excluded."),             # qa report
     ]
     done = h.answer(q_threshold, "A", "c1")
@@ -119,7 +127,8 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert "threshold: drop of at least 30% with p < 0.05" in findings
     assert "pending_approval" in findings
     assert h.drive.path("findings/notes/analysis.ipynb.md").exists()
-    assert "note" in [m["kind"] for m in h.inbox("C")]
+    assert h.inbox("C")[-1] == {**h.inbox("C")[-1], "kind": "note",
+                                "text": "Chen, there's a note on analysis.ipynb about plate P2."}
 
     # A approves the plan; the findings update.
     q_plan = next(q["id"] for q in h.questions() if q["about"].startswith("approval:"))
@@ -136,6 +145,7 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
         conclusion(**stats_run2, summary="Still no evidence of an effect in this data, now with "
                                          "plates P1 and P3."),
         say(**{"pass": True, "problems": []}),
+        say(message="Chen, the note on analysis.ipynb has the re-run's numbers."),
         say(message="Ana, with the re-run included it's still not a hit."),
     ]
     up = h.upload(incoming / "readings_rerun.xlsx", "B", "Re-run at 72 h with vehicle")
@@ -204,7 +214,7 @@ def test_threshold_from_free_text(setup):
     # A finished run, so answering doesn't resume anything: this test is about parsing.
     run = {"id": "r-001", "goal_id": "g-001", "status": "done", "messages": [], "pending": None}
     h._save("runs", run)
-    client.replies += [say(message="Hi Ana, what's a hit?")]
+    client.replies += [say(labels=["30% drop, p < 0.05"]), say(message="Hi Ana, what's a hit?")]
     [qid], errors = h._create_questions(run, goal, {"questions": [
         {"about": "slot:threshold", "text": "What counts as a hit?",
          "choices": [{"label": "30%", "value": THRESHOLD}, {"label": "bad", "value": {"min_drop": 3}}]}]})
@@ -215,3 +225,30 @@ def test_threshold_from_free_text(setup):
     r = h.answer(qid, "A", "other", "a quarter drop, p under 0.01")
     assert r["recorded_as"] == "fact"
     assert h._load("goals", "g-001")["slots"]["threshold"] == {"min_drop": 0.25, "max_p": 0.01}
+
+
+def test_only_qa_writes_to_people(setup):
+    """Every inbox message comes from the Q&A agent: model-written, or one of its fixed
+    notices. Here no provider answers at all, so only the fixed notices can appear."""
+    h, client, _, _ = setup
+    from harness.agents.qa import NOTICES, QA
+    client.replies += [say(intent="other", slots={})]
+    h.message("C", "hello")
+    assert h.inbox("C")[-1] == {**h.inbox("C")[-1], "kind": "notice",
+                                "text": QA.notice("not_a_request")}
+    assert set(NOTICES) == {"not_a_request", "unreadable_answer", "run_stopped"}
+
+
+def test_bad_labels_fall_back_to_the_fixed_format(setup):
+    """A label that drops a number is rejected; after 2 tries the fixed format is used."""
+    h, client, _, _ = setup
+    goal = {"id": "g-001", "requester": "A", "question": "Is ABC-12 a hit?",
+            "slots": {"compound": "ABC-12"}, "status": "open", "runs": [], "history": []}
+    h._save("goals", goal)
+    run = {"id": "r-001", "goal_id": "g-001", "status": "done", "messages": [], "pending": None}
+    client.replies += [say(labels=["A big drop"]), say(labels=["A big drop"]),
+                       say(message="Hi Ana, what's a hit?")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [
+        {"about": "slot:threshold", "text": "What counts as a hit?",
+         "choices": [{"label": "ignored", "value": THRESHOLD}]}]})
+    assert h._load("questions", qid)["choices"][0]["label"] == "Drop of at least 30% with p < 0.05"

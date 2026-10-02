@@ -58,6 +58,23 @@ analysis found, in 3 to 5 sentences, using only the findings given. Say what was
 and by whom, the result with its numbers, and the next step. Don't add claims. Reply in
 JSON only: {"message": "..."}"""
 
+QA_COPY = """You are the Q&A agent in a lab harness. The harness sent a question to one
+scientist ("question_sent_to") and is copying another ("to") because the question is about
+a file they share. Tell "to", in 1 or 2 sentences: the harness asked <question_sent_to>
+about it, what the question is, and that nothing is needed from them unless they
+disagree. <question_sent_to> received the question; they did not ask it. Don't change any
+fact in the question. Reply in JSON only: {"message": "..."}"""
+
+QA_NOTE = """You are the Q&A agent in a lab harness. The analysis left a note on one of the
+named scientist's files. Tell them in 2 or 3 sentences: which file, what the note says, and
+that the full note is in the drive. Keep every number and claim exactly as the note states
+it, and add none. Reply in JSON only: {"message": "..."}"""
+
+QA_LABELS = """You are the Q&A agent in a lab harness. Write a short button label (at most 8
+words) for each answer choice, in the same order, for the named scientist. Each label must
+state the choice's numbers exactly, e.g. a value {"min_drop": 0.3, "max_p": 0.05} becomes
+"At least a 30% drop, p < 0.05". Reply in JSON only: {"labels": ["...", "..."]}"""
+
 QA_ANSWER = """You are the Q&A agent in a lab harness. Answer the scientist's question
 using only the findings given. If the findings don't answer it, say so. 2 to 4 sentences.
 Reply in JSON only: {"message": "..."}"""

@@ -75,6 +75,8 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Refactor, one loop per agent: `Router`, `Planner`, `QA` and `Reviewer` each have their own class and `run()` loop in `harness/agents/`. The orchestrator (`harness/harness.py`) only passes work between them and saves state; it makes no model calls. The Planner hands control back with `ask`, `submit` or `failed`
 - [x] Docs: `docs/agents/` has a one-page loop description for each agent, the orchestrator and the protocol extractor. Prompts are all in `harness/agents/prompts.py`
 - [x] After the refactor: 36 tests pass, and the live run gives the same results (run 1 not a hit after 2 questions, run 2 no questions)
+- [x] Only the Q&A agent writes to scientists. The copy to other owners and the note to a file's owner were the Planner's raw text; they're now Q&A tasks (`copy`, `note`). The threshold buttons' labels are written by Q&A from the values (`labels`, rejected if a number is missing), with a fixed format as the fallback. The 3 system notices are fixed templates in `qa.py`. 38 tests pass
+- [x] Live check of the new Q&A tasks: labels came back with their numbers. The copy to A first said "Ben *asked*" when Ben was the one being asked; fixed by naming the input `question_sent_to` and saying so in `QA_COPY`. 3 of 3 live retries correct
 
 ## 5. Streamlit UI
 - [ ] One tab per scientist (`?as=A`, `?as=B`, `?as=C`)

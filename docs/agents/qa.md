@@ -1,18 +1,25 @@
 # Q&A
 
-**Job:** every conversation with a scientist. It writes, but never decides: the Planner decides what to ask, and the orchestrator decides who receives it.
-**Code:** `harness/agents/qa.py` · **Prompts:** `QA_ASK`, `QA_REPORT`, `QA_ANSWER`, `QA_PARSE_OTHER` · **Model:** small
+**Job:** every message a scientist receives. No other part of the harness writes text to a person. It writes, but never decides: the Planner decides what to ask, and the orchestrator decides who receives it.
+**Code:** `harness/agents/qa.py` · **Prompts:** `QA_ASK`, `QA_COPY`, `QA_NOTE`, `QA_LABELS`, `QA_REPORT`, `QA_ANSWER`, `QA_PARSE_OTHER` · **Model:** small
 
 ## Tasks
 
 | Task | In | Out | If the model fails |
 |---|---|---|---|
 | `ask` | the person, the Planner's question, context | a short message to that person | the Planner's own wording |
+| `copy` | an owner who was copied, who was asked, the question | "Ben was asked about plate P2…" | "{name} was asked: {question}" |
+| `note` | a file's owner, the file, the reviewed note | a short message pointing to the note | "There's a note on {file}: {note}" |
+| `labels` | the person, the question, each choice's value | one button label per choice, stating its numbers | the fixed format, e.g. "Drop of at least 30% with p < 0.05" |
 | `report` | the person, `findings.md` | 3–5 sentences on the result | "The analysis is finished..." |
 | `answer` | the person, their question, `findings.md` | an answer from the findings only | "I couldn't answer that just now." |
 | `parse_other` | the question, an example value, their free-text reply | `{value, understood_as}` | `{value: null}`, and the person is asked again |
 
-Answer choices are shown as buttons, so a picked choice becomes a fact without any model involved. `parse_other` runs only when someone types "something else".
+Answer choices are shown as buttons, so a picked choice becomes a fact without any model involved. `parse_other` runs only when someone types "something else". The Planner's own labels for choices never reach a scientist: `labels` rewrites them from the values, and a label that leaves out one of the value's numbers is rejected.
+
+**Fixed notices** (no model call, so they work when every provider is down): `not_a_request`, `unreadable_answer`, `run_stopped`. They live in `qa.py` as `NOTICES`.
+
+Text a scientist can see that isn't written by Q&A: the choices on a contradiction question ("Exclude plate P2 from the analysis"), which `check_consistency` writes in code because the chosen one becomes the fact's wording, and the "Something else (type it)" button.
 
 ## Loop (the same for every task)
 
@@ -24,7 +31,8 @@ repeat up to 2 times:
     if no provider answered:     return the fallback
     if reply isn't JSON:         tell it, try again
     if the task's check fails:   tell it what's missing, try again
-        (ask / report / answer need a non-empty "message"; parse_other needs "value")
+        (ask / copy / note / report / answer need a non-empty "message";
+         labels needs one label per choice, each stating its numbers; parse_other needs "value")
     return reply
 
 return the fallback
