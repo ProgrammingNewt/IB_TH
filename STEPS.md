@@ -40,7 +40,7 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Checkpoint before step 3: 17/17 tests pass, plus a manual walk of run 1 on a scratch drive. Checked the files it leaves behind: the contradiction (P2: 48 h and 0 vehicle wells, B decides), B's fact scoped to file + plate, stats on P1 only (2.4% drop, p = 0.63, not a hit), lineage linking the analysis set to fact f-001, and a re-run plan pending approval. Nothing needed fixing
 - Not tested yet, and checked in later steps: the LLM-backed protocol extractor (step 4), pause and resume (step 4), and a clean install from a fresh clone (step 7, Docker)
 
-## 3. LLM gateway
+## 3. LLM gateway: done
 - [x] One OpenAI-compatible client (`harness/gateway/gateway.py`), configured by `config.yaml`
 - [x] Providers in order: `model_provider_1` (DeepSeek) → `model_provider_2` (Cerebras) → `local_model` (Ollama, only when `LOCAL_MODEL=1`). A provider without a key is skipped
 - [x] Each agent has a model tier (small or large). No per-call output cap is sent, so each provider uses its own maximum
@@ -51,8 +51,8 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Every call is logged (agent, provider, model, tokens, latency, outcome) through a JSONL tracer
 - [x] `python -m harness.gateway` checks each provider on its own and reports ok, skipped, refused or error
 - [x] Tests: `tests/test_gateway.py` (15)
-- [ ] Add keys: `cp .env.example .env`, fill in `DEEPSEEK_API_KEY` and `CEREBRAS_API_KEY` (you do this; never paste keys in chat), then run `.venv/bin/python -m harness.gateway`
-- [ ] Confirm the model names in `config.yaml` against each provider's current list, and that the chosen models support tool calls
+- [x] Keys added to `.env` (gitignored). `python -m harness.gateway` reports ok for DeepSeek and Cerebras
+- [x] Model names confirmed, and all four models (`deepseek-flash`, `deepseek-v4-pro`, `qwen-3.8-27b`, `gpt-oss-120b`) made a correct `parse_xlsx` tool call
 
 ## 4. Agents and the loop
 - [ ] Router: works out what kind of message it is and pulls goal slots from it
