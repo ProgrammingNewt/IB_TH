@@ -1,4 +1,5 @@
-"""The harness: goals, runs, the Planner's tool loop, questions, approvals and findings.
+"""The orchestrator. It passes work between the agents and keeps state. It makes no
+model calls of its own: each agent (Router, Planner, Q&A, Reviewer) runs its own loop.
 
 Everything a run needs to continue is stored in the drive:
 
@@ -10,6 +11,12 @@ Everything a run needs to continue is stored in the drive:
     findings/            findings.md, its history, notes for file owners, plate plans
 
 Entry points, called by the UI or a script: `message`, `answer`, `upload`.
+
+How a run moves:
+    message --Router--> new goal --> Planner loop --+--> ask:    Q&A writes questions, run waits
+                                          ^         |            answer() resumes the Planner
+                                          |         +--> submit: Reviewer passes or fails it
+                                          +--fail---+            pass: findings + Q&A report
 """
 from __future__ import annotations
 
@@ -17,48 +24,16 @@ import datetime as dt
 import json
 from typing import Any
 
-from harness.agents import agents
-from harness.agents.prompts import PLANNER
+from harness.agents.extractor import llm_protocol_extractor
+from harness.agents.planner import Handoff, Planner, tool_reply
+from harness.agents.qa import QA
+from harness.agents.reviewer import Reviewer
+from harness.agents.router import Router
 from harness.drive.store import Drive
-from harness.gateway.gateway import Gateway, GatewayError, TokenBudgetExceeded, jsonl_tracer
+from harness.gateway.gateway import Gateway, jsonl_tracer
 from harness.state import REQUIRED_SLOTS, RunState
-from harness.tools import files, registry
+from harness.tools import files
 from harness.tools.analysis import STATS
-
-CONTROL_TOOLS = [
-    {"type": "function", "function": {
-        "name": "ask_scientists",
-        "description": "Ask scientists questions. The run pauses until every question is answered.",
-        "parameters": {"type": "object", "required": ["questions"], "properties": {
-            "questions": {"type": "array", "items": {"type": "object", "required": ["about", "text"],
-                "properties": {
-                    "about": {"type": "string",
-                              "description": "contradiction:<id> or slot:threshold"},
-                    "to": {"type": "string", "description": "person id; set by the harness for contradictions"},
-                    "text": {"type": "string", "description": "the question"},
-                    "choices": {"type": "array", "items": {"type": "object",
-                        "properties": {"label": {"type": "string"}, "value": {"type": "object"}}}},
-                }}}}}}},
-    {"type": "function", "function": {
-        "name": "submit_conclusion",
-        "description": "Submit the conclusion for review. Every number must cite its source.",
-        "parameters": {"type": "object",
-            "required": ["verdict", "summary", "numbers", "next_step"],
-            "properties": {
-                "verdict": {"type": "string", "enum": ["hit", "not a hit", "inconclusive"]},
-                "summary": {"type": "string"},
-                "numbers": {"type": "array", "items": {"type": "object",
-                    "required": ["label", "value", "source", "key"],
-                    "properties": {"label": {"type": "string"}, "value": {"type": "number"},
-                                   "source": {"type": "string", "description": "e.g. derived/stats.json"},
-                                   "key": {"type": "string", "description": "e.g. drop"}}}},
-                "notes_for_owners": {"type": "array", "items": {"type": "object",
-                    "properties": {"owner": {"type": "string"}, "file": {"type": "string"},
-                                   "note": {"type": "string"}}}},
-                "next_step": {"type": "string"},
-                "plan": {"type": "string", "description": "plan file from plan_followup_plate, if any"},
-            }}}},
-]
 
 
 def _now() -> str:
@@ -69,7 +44,14 @@ class Harness:
     def __init__(self, drive: Drive, gateway: Gateway, max_turns: int = 40,
                  max_revisions: int = 2, tool_budget: int = 25):
         self.drive, self.gw = drive, gateway
-        self.max_turns, self.max_revisions, self.tool_budget = max_turns, max_revisions, tool_budget
+        self.max_revisions, self.tool_budget = max_revisions, tool_budget
+        extractor = llm_protocol_extractor(gateway)
+        self.router = Router(gateway)
+        self.qa = QA(gateway)
+        self.reviewer = Reviewer(gateway)
+        self.planner = Planner(gateway, drive, max_turns=max_turns, overrides={
+            "extract_protocol_fields":
+                lambda d, path: files.extract_protocol_fields(d, path, extractor=extractor)})
 
     # ---- small stores -------------------------------------------------------------
 
@@ -116,11 +98,11 @@ class Harness:
         """A scientist typed something. The Router decides what to do with it."""
         if sender not in self.drive.people:
             raise ValueError(f"unknown person {sender!r}")
-        routed = agents.route(self.gw, self._person(sender), text)
+        routed = self.router.run(self._person(sender), text)
         if routed["intent"] == "question_about_findings":
             findings = self.drive.path("findings/findings.md")
-            reply = agents.qa_answer(self.gw, self._person(sender), text,
-                                     findings.read_text() if findings.exists() else "")
+            reply = self.qa.answer(self._person(sender), text,
+                                   findings.read_text() if findings.exists() else "")
             self._notify(sender, "answer", reply)
             return {"intent": routed["intent"], "reply": reply}
         if routed["intent"] != "new_analysis":
@@ -171,7 +153,7 @@ class Harness:
         elif kind == "slot":
             value = next(c.get("value") for c in q["choices"] if c["key"] == choice)
             if choice == "other":
-                parsed = agents.qa_parse_other(self.gw, q, text or "")
+                parsed = self.qa.parse_other(q, text or "")
                 value = parsed["value"]
                 if not _valid_slot(ref, value):
                     self._notify(by, "question", "I couldn't turn that into a threshold. Could you "
@@ -207,8 +189,7 @@ class Harness:
         run = {"id": self._new_id("runs", "r"), "goal_id": goal["id"], "trigger": trigger,
                "status": "running", "tool_calls": 0, "turns": 0, "revisions": 0, "nudges": 0,
                "pending": None, "started": _now(),
-               "messages": [{"role": "system", "content": PLANNER},
-                            {"role": "user", "content": self._context(goal, trigger)}]}
+               "messages": Planner.first_messages(self._context(goal, trigger))}
         goal["runs"].append(run["id"])
         self._save("goals", goal)
         self._save("runs", run)
@@ -225,8 +206,7 @@ class Harness:
         answers = [{"question": q["id"], "about": q["about"], "answered_by": q["answer"]["by"],
                     "answer": q["answer"].get("statement") or q["answer"]["choice"]}
                    for q in pending]
-        run["messages"].append({"role": "tool", "tool_call_id": run["pending"]["tool_call_id"],
-                                "content": json.dumps({"ok": True, "answers": answers})})
+        tool_reply(run, run["pending"]["tool_call_id"], {"ok": True, "answers": answers})
         run.update(status="running", pending=None)
         self._trace(run, {"event": "resumed", "answers": answers})
         return self._loop(run)
@@ -246,11 +226,6 @@ class Harness:
             "previous_findings_exist": findings.exists(),
         }, indent=2, default=str)
 
-    def _overrides(self) -> dict:
-        extractor = agents.llm_protocol_extractor(self.gw)
-        return {"extract_protocol_fields":
-                lambda drive, path: files.extract_protocol_fields(drive, path, extractor=extractor)}
-
     def _save_run(self, run: dict) -> None:
         run["tokens_used"] = self.gw.tokens_used
         self._save("runs", run)
@@ -263,86 +238,42 @@ class Harness:
         return {"run": run["id"], "status": status, "note": note}
 
     def _loop(self, run: dict) -> dict:
+        """Run the Planner, and act on each handoff until the run waits or finishes."""
         goal = self._load("goals", run["goal_id"])
         self.gw.tokens_used = run.get("tokens_used", 0)     # each run has its own token budget
         self.gw.tracer = jsonl_tracer(self.drive.path(f"trace/{run['id']}.jsonl"))
         state = RunState(goal=goal["slots"], budget=self.tool_budget, tool_calls=run["tool_calls"])
-        overrides = self._overrides()
-        tools = registry.openai_tools() + CONTROL_TOOLS
 
-        while run["turns"] < self.max_turns:
-            run["turns"] += 1
-            try:
-                c = self.gw.complete("planner", run["messages"], tools=tools)
-            except (GatewayError, TokenBudgetExceeded) as exc:
-                self._notify(goal["requester"], "status", f"The analysis stopped: {exc}", run["id"])
-                return self._finish(run, "failed", str(exc))
+        def on_tool(name: str, args: dict, result: dict) -> None:
+            self._after_tool(run, goal, name, result)
+            self._trace(run, {"event": "tool", "tool": name, "args": args, "ok": result.get("ok"),
+                              "blocked": result.get("blocked"), "error": result.get("error")})
 
-            run["messages"].append({
-                "role": "assistant", "content": c.content or "",
-                **({"tool_calls": [{"id": t["id"], "type": "function",
-                                    "function": {"name": t["name"], "arguments": t["arguments"]}}
-                                   for t in c.tool_calls]} if c.tool_calls else {})})
-            if not c.tool_calls:
-                run["nudges"] += 1
-                if run["nudges"] > 3:
-                    return self._finish(run, "failed", "the Planner stopped calling tools")
-                run["messages"].append({"role": "user", "content":
-                    "Call a tool, ask_scientists, or submit_conclusion."})
-                continue
+        while True:
+            handoff: Handoff = self.planner.run(run, state, on_tool)
+            if handoff.kind == "failed":
+                self._notify(goal["requester"], "status", f"The analysis stopped: {handoff.reason}",
+                             run["id"])
+                return self._finish(run, "failed", handoff.reason)
 
-            ask = submit = None
-            for t in c.tool_calls:
-                try:
-                    args = json.loads(t["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    self._tool_reply(run, t["id"], {"ok": False, "error": "arguments weren't valid JSON"})
-                    continue
-                if t["name"] == "ask_scientists":
-                    ask = (t, args)
-                elif t["name"] == "submit_conclusion":
-                    submit = (t, args)
-                else:
-                    state.goal = goal["slots"]
-                    result = registry.call(self.drive, state, t["name"], args, overrides)
-                    run["tool_calls"] = state.tool_calls
-                    self._after_tool(run, goal, t["name"], result)
-                    self._trace(run, {"event": "tool", "tool": t["name"], "args": args,
-                                      "ok": result.get("ok"), "blocked": result.get("blocked"),
-                                      "error": result.get("error")})
-                    self._tool_reply(run, t["id"], result)
-
-            if ask:
-                t, args = ask
-                created, errors = self._create_questions(run, goal, args)
-                if submit:
-                    self._tool_reply(run, submit[0]["id"], {"ok": False, "error":
-                        "not reviewed: answer-pending questions come first"})
+            if handoff.kind == "ask":
+                created, errors = self._create_questions(run, goal, handoff.args)
                 if not created:
-                    self._tool_reply(run, t["id"], {"ok": False, "errors": errors})
+                    tool_reply(run, handoff.call_id, {"ok": False, "errors": errors})
                     self._save_run(run)
                     continue
-                run.update(status="waiting", pending={"tool_call_id": t["id"], "questions": created})
-                if errors:
-                    run["pending"]["errors"] = errors
+                run.update(status="waiting", pending={"tool_call_id": handoff.call_id,
+                                                      "questions": created, "errors": errors})
                 self._save_run(run)
                 self._trace(run, {"event": "waiting", "questions": created, "errors": errors})
                 return {"run": run["id"], "status": "waiting", "questions": created}
 
-            if submit:
-                t, draft = submit
-                done = self._review_and_finish(run, goal, draft)
-                if done:
-                    return done
-                self._tool_reply(run, t["id"], {"ok": False, "review": run["last_review"],
-                                                "revisions_left": self.max_revisions - run["revisions"]})
+            done = self._review_and_finish(run, goal, handoff.args)
+            if done:
+                return done
+            tool_reply(run, handoff.call_id, {"ok": False, "review": run["last_review"],
+                                              "revisions_left": self.max_revisions - run["revisions"]})
             self._save_run(run)
-
-        return self._finish(run, "failed", f"turn limit of {self.max_turns} reached")
-
-    def _tool_reply(self, run: dict, call_id: str, result: dict) -> None:
-        run["messages"].append({"role": "tool", "tool_call_id": call_id,
-                                "content": json.dumps(result, default=str)})
 
     def _after_tool(self, run: dict, goal: dict, name: str, result: dict) -> None:
         if not result.get("ok"):
@@ -372,8 +303,7 @@ class Harness:
         existing = next((q for q in self.questions(status="open") if q["about"] == about), None)
         if existing:
             return existing
-        message = agents.qa_ask(self.gw, self._person(to), text,
-                                {"goal": goal["question"], "about": about})
+        message = self.qa.ask(self._person(to), text, {"goal": goal["question"], "about": about})
         q = {"id": self._new_id("questions", "q"), "run_id": run["id"], "goal_id": goal["id"],
              "to": to, "cc": cc, "about": about, "text": text, "message": message,
              "choices": choices, "status": "open", "asked": _now()}
@@ -429,11 +359,8 @@ class Harness:
                 "notebook_claims": {k: v for k, v in claims.items() if k != "code"}}
 
     def _review_and_finish(self, run: dict, goal: dict, draft: dict) -> dict | None:
-        try:
-            review = agents.review(self.gw, draft, self._evidence(goal), self.drive.read_json,
+        review = self.reviewer.run(draft, self._evidence(goal), self.drive.read_json,
                                    compound=goal["slots"].get("compound"))
-        except (GatewayError, agents.AgentReplyError) as exc:
-            review = {"pass": False, "problems": [f"review couldn't run: {exc}"], "by": "error"}
         run["last_review"] = review
         self._trace(run, {"event": "review", **review})
         if not review["pass"]:
@@ -461,7 +388,7 @@ class Harness:
                     fh.write(f"## {run['id']}, for {self._person(owner)['name']}\n\n{n.get('note', '')}\n\n")
                 self._notify(owner, "note", f"There's a note on {n.get('file')}: {n.get('note', '')}", rel)
         self._notify(goal["requester"], "report",
-                     agents.qa_report(self.gw, self._person(goal["requester"]), md), "findings/findings.md")
+                     self.qa.report(self._person(goal["requester"]), md), "findings/findings.md")
         status = "done" if review["pass"] else "done_with_problems"
         return self._finish(run, status, "; ".join(unresolved))
 

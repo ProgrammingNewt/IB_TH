@@ -72,6 +72,9 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
   - run 2: no new questions, P3 added, 3.3% drop, p = 0.267, still not a hit, "what changed" section filled in
   - about 44k tokens per run, about 3 min for both runs
 - [x] Fixed after the first live run: the Reviewer now sees the SOP text (it had rejected a correct claim citing the SOP), and the Planner no longer states a plan's approval status
+- [x] Refactor, one loop per agent: `Router`, `Planner`, `QA` and `Reviewer` each have their own class and `run()` loop in `harness/agents/`. The orchestrator (`harness/harness.py`) only passes work between them and saves state; it makes no model calls. The Planner hands control back with `ask`, `submit` or `failed`
+- [x] Docs: `docs/agents/` has a one-page loop description for each agent, the orchestrator and the protocol extractor. Prompts are all in `harness/agents/prompts.py`
+- [x] After the refactor: 36 tests pass, and the live run gives the same results (run 1 not a hit after 2 questions, run 2 no questions)
 
 ## 5. Streamlit UI
 - [ ] One tab per scientist (`?as=A`, `?as=B`, `?as=C`)
