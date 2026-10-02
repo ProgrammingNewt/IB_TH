@@ -102,11 +102,16 @@ with tab_ask:
     inbox = list(reversed(h.inbox(me)))
     if not inbox:
         st.caption("Nothing yet.")
+    open_ids = {q["id"]: q for q in my_open}
     for m in inbox:
         with st.container(border=True):
             st.caption(f"{c.KIND_BADGE.get(m['kind'], m['kind'])} · {m['at'][11:19]} UTC"
                        + (f" · `{m['ref']}`" if m.get("ref") else ""))
             st.write(m["text"])
+            q = open_ids.get(m.get("ref"))
+            if m["kind"] == "question" and q:
+                st.caption("Options: " + " · ".join(ch["label"] for ch in q["choices"]) +
+                           ". Answer in the ❓ My questions tab.")
 
 # ---- My questions ------------------------------------------------------------------------
 

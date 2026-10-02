@@ -88,9 +88,27 @@ class QA:
 
     # Named entry points, so callers read clearly.
 
-    def ask(self, person: dict, question: str, context: dict) -> str:
-        return self.run("ask", {"to": person, "question": question, "context": context},
-                        {"message": question})["message"].strip()
+    def ask(self, person: dict, question: str, context: dict, options: list[str] = (),
+            must_mention: list[str] = ()) -> str:
+        """A question that ends by naming the decision and its options.
+
+        `must_mention` are words the message has to contain (e.g. "exclude", "keep"); a
+        message without them, or without a question mark, is sent back to be rewritten."""
+        def check(out: dict) -> str | None:
+            problem = _message(out)
+            if problem:
+                return problem
+            text = out["message"].lower()
+            if "?" not in text:
+                return "End the message with the question itself."
+            missing = [w for w in must_mention if w.lower() not in text]
+            if missing:
+                return f"The question must name the options: {', '.join(missing)}."
+            return None
+        fallback = question + (f" Options: {'; '.join(options)}." if options else "")
+        return self.run("ask", {"to": person, "question": question, "options": list(options),
+                                "context": context},
+                        {"message": fallback}, check=check)["message"].strip()
 
     def report(self, person: dict, findings_md: str) -> str:
         return self.run("report", {"to": person, "findings": findings_md}, {"message":

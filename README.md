@@ -34,3 +34,5 @@ The demo, in the UI:
 5. Optional: in the sidebar, turn on "Provider 1 refuses biology" and watch the Trace tab fall back to provider 2.
 
 The toy-data playground page generates new drives from a scenario and a seed, and plots their readings.
+
+Streamlit only reloads files in `ui/`. After changing anything in `harness/`, restart the server.

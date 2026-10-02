@@ -335,7 +335,11 @@ class Harness:
         existing = next((q for q in self.questions(status="open") if q["about"] == about), None)
         if existing:
             return existing
-        message = self.qa.ask(self._person(to), text, {"goal": goal["question"], "about": about})
+        kind = about.split(":")[0]
+        must = {"contradiction": ["exclude", "keep"], "approval": ["approve"]}.get(kind, [])
+        options = [c["label"] for c in choices if c["key"] != "other"]
+        message = self.qa.ask(self._person(to), text, {"goal": goal["question"], "about": about},
+                              options=options, must_mention=must)
         q = {"id": self._new_id("questions", "q"), "run_id": run["id"], "goal_id": goal["id"],
              "to": to, "cc": cc, "about": about, "text": text, "message": message,
              "choices": choices, "status": "open", "asked": _now()}
