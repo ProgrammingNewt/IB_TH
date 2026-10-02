@@ -16,6 +16,9 @@ Reply in JSON only:
 - "question_about_findings": they ask about a conclusion the team already has, e.g.
   "Why did you exclude plate P2?".
 - "other": anything else.
+Slots: "compound" is the substance tested; "readout" is what was measured (a marker, an
+assay, a signal); "comparator" is what it's compared with (vehicle, a control, another
+compound). Words like "hit", "effect", "work" or "experiment" are none of these.
 Fill a slot only if the message states it, and copy the term exactly as the scientist
 wrote it, typos included. Never correct, complete or normalise a name: "acb 12" stays
 "acb 12", even if you think they meant something else. The harness checks every term
@@ -94,7 +97,9 @@ Reply in JSON only: {"message": "..."}"""
 
 QA_PARSE_OTHER = """You are the Q&A agent in a lab harness. A scientist answered a question
 in their own words instead of picking a choice. Turn their reply into the same shape as
-the choices' values. If the reply doesn't contain what's needed, set "value" to null.
+the choices' values. If the reply means one of the options, use that option exactly. If
+it says the term was a mistake or to ignore the question, use the first option (what the
+files have). If the reply doesn't contain what's needed, set "value" to null.
 Reply in JSON only: {"value": {...} or null, "understood_as": "one short sentence"}"""
 
 REVIEWER = """You are the Reviewer in a lab harness. You check a draft conclusion against

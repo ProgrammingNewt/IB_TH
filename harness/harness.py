@@ -251,7 +251,13 @@ class Harness:
         elif kind == "slot":
             value = next(c.get("value") for c in q["choices"] if c["key"] == choice)
             if choice == "other" and ref != "threshold":
-                value = (text or "").strip()
+                value = self.qa.parse_other(q, text or "")["value"]
+                if not isinstance(value, str) or not value.strip():
+                    self._notify(by, "notice", self.qa.notice(
+                        "unreadable_answer", what=f"a {ref}",
+                        example=f"one of: {', '.join(c['label'] for c in q['choices'] if c['key'] != 'other')}"), qid)
+                    return {"recorded_as": "nothing", "reason": "couldn't understand the answer"}
+                value = value.strip()
             elif choice == "other":
                 parsed = self.qa.parse_other(q, text or "")
                 value = parsed["value"]
@@ -351,6 +357,21 @@ class Harness:
         return {"run": run["id"], "status": status, "note": note}
 
     def _loop(self, run: dict) -> dict:
+        """Drive a run. An unexpected error fails the run cleanly: the requester is told,
+        the progress thread says so, and nothing is left stuck as "running"."""
+        try:
+            return self._drive(run)
+        except Exception as exc:                                         # noqa: BLE001
+            reason = f"an internal error ({type(exc).__name__}: {exc})"
+            goal = self._load("goals", run["goal_id"]) or {}
+            if goal.get("requester"):
+                self._notify(goal["requester"], "notice", self.qa.notice("run_stopped", reason=reason),
+                             run["id"])
+            self._say(run.get("progress_id"), "failed", state="failed", reason=reason)
+            self._trace(run, {"event": "error", "error": reason})
+            return self._finish(run, "failed", reason)
+
+    def _drive(self, run: dict) -> dict:
         """Run the Planner, and act on each handoff until the run waits or finishes."""
         goal = self._load("goals", run["goal_id"])
         self.gw.tokens_used = run.get("tokens_used", 0)     # each run has its own token budget
@@ -570,14 +591,16 @@ class Harness:
                     run, goal, to=c["decides"], cc=[o for o in c["owners"] if o != c["decides"]],
                     about=about, text=text or f"Plate {c['plate_id']} in {c['file']}: {issues}. What should we do?",
                     choices=[{"key": k, "label": v} for k, v in c["choices"].items()])
-            elif kind == "slot" and ref in goal.get("ungrounded", {}):
-                # The options are what the files contain, not the Planner's guesses.
-                u = goal["ungrounded"][ref]
+            elif kind == "slot" and ref in TERM_SLOTS:
+                # The options are what the files contain, never the Planner's own choices.
+                u = goal.get("ungrounded", {}).get(ref) or {
+                    "asked": goal["slots"].get(ref) or "(not given)", "known": self._known_values().get(ref, [])}
                 choices = [{"key": f"c{i + 1}", "label": k, "value": k} for i, k in enumerate(u["known"])]
                 choices.append({"key": "other", "label": "Something else (type it)", "value": None})
                 q = self._new_question(run, goal, to=goal["requester"], cc=[], about=about,
-                                       text=text or f"You named the {ref} {u['asked']!r}, but the files "
-                                                    f"only have {', '.join(u['known'])}. Which did you mean?",
+                                       text=text or (f"You named the {ref} {u['asked']!r}, but the files "
+                                                     f"only have {', '.join(u['known'])}. Which did you mean?"
+                                                     if u["known"] else f"Which {ref} should the analysis use?"),
                                        choices=choices)
             elif kind == "slot" and ref in REQUIRED_SLOTS:
                 choices = [c for c in item.get("choices") or [] if _valid_slot(ref, c.get("value"))]
@@ -707,6 +730,9 @@ class Harness:
         self.drive.path("findings/findings.md").write_text(md)
         self.drive.path(f"findings/history/{goal['last_run']}.md").write_text(md)
         return md
+
+
+TERM_SLOTS = ("compound", "readout", "comparator")
 
 
 def _norm(name: str) -> str:

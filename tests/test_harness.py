@@ -381,10 +381,11 @@ def test_the_requesters_confirmation_stands(setup):
     goal, run, _ = _goal_after_parsing(h, {"compound": "XYZ-99"})
     client.replies += [say(message="Hi Ana, which compound did you mean?")]
     [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "slot:compound", "text": ""}]})
+    client.replies += [say(value="XYZ-99", understood_as="they mean XYZ-99, a new batch name")]
     h.answer(qid, "A", "other", "XYZ-99, it's a new batch name")
     goal = h._load("goals", "g-001")
     h._ground_slots(run, goal, {})
-    assert goal["ungrounded"] == {} and goal["slots"]["compound"] == "XYZ-99, it's a new batch name"
+    assert goal["ungrounded"] == {} and goal["slots"]["compound"] == "XYZ-99"
 
 
 
@@ -459,3 +460,51 @@ def test_the_question_comes_first(setup, message, ok):
     out = h.qa.ask(h._person("A"), "q", {}, options=["Exclude", "Keep"],
                    must_mention=[] if "hit" in message else ["exclude", "keep"])
     assert out == (message if ok else good)
+
+
+
+def test_planner_options_for_a_term_slot_are_replaced_by_the_files(setup):
+    """The Planner re-asking about the readout with its own (oddly shaped) options gets a
+    question built from the files, and nothing crashes."""
+    h, client, _, _ = setup
+    goal, run, _ = _goal_after_parsing(h, {"compound": "ABC-12"})
+    client.replies += [say(message="Ana, should the analysis use SA-beta-gal? The protocol says so.")]
+    created, errors = h._create_questions(run, goal, {"questions": [{
+        "about": "slot:readout", "text": "Which readout?",
+        "choices": [{"label": "Yes", "value": {"readout": "SA-beta-gal"}}, {"label": "No", "value": "other"}]}]})
+    q = h._load("questions", created[0])
+    assert errors == [] and [c["label"] for c in q["choices"]] == ["SA-beta-gal", "Something else (type it)"]
+
+
+def test_labels_accept_any_value_shape(setup):
+    h, client, _, _ = setup
+    client.replies += [say(labels=["SA-beta-gal"])]
+    assert h.qa.labels(h._person("A"), "q", ["SA-beta-gal"], ["fallback"]) == ["SA-beta-gal"]
+
+
+@pytest.mark.parametrize("parsed,recorded", [("SA-beta-gal", True), (None, False)])
+def test_free_text_for_a_term_is_interpreted_not_stored_verbatim(setup, parsed, recorded):
+    h, client, _, _ = setup
+    goal, run, _ = _goal_after_parsing(h, {"compound": "ABC-12", "readout": "hit"})
+    client.replies += [say(message="Ana, which readout did you mean? You wrote 'hit'.")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "slot:readout", "text": ""}]})
+    client.replies += [say(value=parsed, understood_as="use the protocol's readout")]
+    out = h.answer(qid, "A", "other", "i mistyped sorry ignore this")
+    goal = h._load("goals", "g-001")
+    if recorded:
+        assert goal["slots"]["readout"] == "SA-beta-gal"
+    else:
+        assert out["recorded_as"] == "nothing" and h._load("questions", qid)["status"] == "open"
+        assert goal["slots"]["readout"] == "hit" and h.inbox("A")[-1]["kind"] == "notice"
+
+
+def test_an_error_inside_a_run_fails_it_cleanly(setup, monkeypatch):
+    h, client, _, _ = setup
+    client.replies += [say(intent="new_analysis", slots={"compound": "ABC-12"})]
+    monkeypatch.setattr(h.planner, "run", lambda *a, **k: (_ for _ in ()).throw(AttributeError("boom")))
+    out = h.message("A", "Is ABC-12 a hit?")
+    assert out["status"] == "failed"
+    t = h.threads("A")[0]
+    assert t["state"] == "failed" and "internal error (AttributeError: boom)" in t["steps"][-1]["text"]
+    assert h._load("runs", out["run"])["status"] == "failed"
+    assert h.inbox("A")[-1]["kind"] == "notice"

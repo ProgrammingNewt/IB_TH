@@ -48,7 +48,8 @@ def _labels_for(values: list[dict]) -> Callable[[dict], str | None]:
                 and all(isinstance(x, str) and x.strip() for x in labels)):
             return f"\"labels\" must be a list of {len(values)} non-empty strings."
         for label, value in zip(labels, values):
-            for n in (value or {}).values():
+            numbers = value.values() if isinstance(value, dict) else [value]
+            for n in numbers:
                 if isinstance(n, (int, float)) and f"{n * 100:g}" not in label and f"{n:g}" not in label:
                     return f"The label {label!r} doesn't state the number {n:g}."
         return None
@@ -194,6 +195,7 @@ class QA:
 
     def parse_other(self, question: dict, reply: str) -> dict[str, Any]:
         example = next((c["value"] for c in question["choices"] if c.get("value")), None)
+        options = [c["value"] for c in question["choices"] if c.get("value") is not None]
         out = self.run("parse_other", {"question": question["text"], "value_shape_example": example,
-                                       "reply": reply}, {"value": None})
+                                       "options": options, "reply": reply}, {"value": None})
         return {"value": out.get("value"), "understood_as": out.get("understood_as", "")}
