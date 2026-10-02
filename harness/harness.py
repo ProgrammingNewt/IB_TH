@@ -81,12 +81,12 @@ class Harness:
         return self.drive.read_json(f"messages/{person}.json", [])
 
     def _notify(self, person: str, kind: str, text: str, ref: str | None = None) -> None:
-        """Deliver a message to an inbox. `text` always comes from the Q&A agent."""
+        """Deliver a message to an inbox. `text` always comes from the Q&A agent. Locked,
+        because a run and a chat answer can both write to the same inbox."""
         if person not in self.drive.people:
             return
-        box = self.inbox(person)
-        box.append({"at": _now(), "kind": kind, "text": text, "ref": ref})
-        self.drive.write_json(f"messages/{person}.json", box)
+        entry = {"at": _now(), "kind": kind, "text": text, "ref": ref}
+        self.drive.update_json(f"messages/{person}.json", lambda box: (box or []) + [entry], [])
 
     def _person(self, pid: str) -> dict:
         return {"id": pid, **self.drive.people.get(pid, {"name": pid})}
@@ -141,32 +141,103 @@ class Harness:
     # ---- entry points -------------------------------------------------------------
 
     def message(self, sender: str, text: str, progress_id: str | None = None) -> dict:
-        """A scientist typed something. The Router decides what to do with it.
-
-        The UI calls `receive` first, so the person sees an acknowledgement at once, and
-        passes its id here. Called without one, this acknowledges itself."""
+        """A scientist typed something: route it, answer it, or start an analysis.
+        Scripts and tests use this; the UI calls `chat` and `start_analysis` separately so a
+        question can be answered while an analysis is running."""
         pid = progress_id or self.receive(sender, text)
+        out = self.chat(sender, text, pid)
+        if out["intent"] != "new_analysis":
+            return out
+        return self.start_analysis(sender, text, out["slots"], out.get("unclear", []), pid)
+
+    def active_analyses(self, person: str | None = None) -> list[dict]:
+        """Goals whose latest run is still going, that involve `person`: they asked it, or
+        a question in it is for them or copies them."""
+        out = []
+        for goal in self.goals():
+            run = self._load("runs", goal["runs"][-1]) if goal["runs"] else None
+            qs = [q for q in self.questions() if q["goal_id"] == goal["id"]]
+            # In progress while the run is going, or while anything on it is still open
+            # (e.g. a plan waiting for approval after the run finished).
+            if not run or (run["status"] not in ("running", "waiting")
+                           and not any(q["status"] == "open" for q in qs)):
+                continue
+            if person is None or goal["requester"] == person or any(
+                    q["to"] == person or person in q["cc"] for q in qs):
+                waiting = self._waiting_for([q["id"] for q in qs if q["status"] == "open"]) \
+                    if any(q["status"] == "open" for q in qs) else ""
+                out.append({"goal": goal["id"], "question": goal["question"],
+                            "status": run["status"] if run["status"] in ("running", "waiting") else "awaiting answers",
+                            "terms": {k: v for k, v in goal["slots"].items() if k in TERM_SLOTS},
+                            "waiting_for": waiting})
+        return out
+
+    def chat(self, sender: str, text: str, pid: str) -> dict:
+        """Route a message and answer it if it's a question. Read-only for every analysis,
+        so it can run while one is in progress. A new analysis is returned, not started."""
         try:
-            routed = self.router.run(self._person(sender), text)
-            if routed["intent"] == "question_about_findings":
+            active = self.active_analyses(sender)
+            routed = self.router.run(self._person(sender), text, active=active)
+            intent = routed["intent"]
+            # Code fallback: with an analysis running, a message about the same compound (or
+            # none) is about that analysis, not a second one.
+            if active and intent == "new_analysis":
+                asked = routed["slots"].get("compound")
+                if not asked or any(_norm(asked) == _norm(a["terms"].get("compound", ""))
+                                    for a in active):
+                    intent = "question_about_run"
+            if active and intent == "question_about_findings" and not self.drive.path(
+                    "findings/findings.md").exists():
+                intent = "question_about_run"
+            if active and intent == "other" and _looks_like_question(text):
+                intent = "question_about_run"
+
+            goal = self._goal_for_questions(sender, active)
+            if intent in ("question_about_findings", "question_about_run") and goal:
+                # One state for any question about an analysis: its findings (if any), what
+                # the run did, the questions and answers, and any plate plan in full.
+                self._say(pid, "looking")
+                reply = self.qa.explain(self._person(sender), text, self.run_state(goal),
+                                        renamed=_renamed(goal))
+                self._notify(sender, "answer", reply)
+                self._step(pid, reply, state="done", goal=goal["id"])
+                return {"intent": intent, "reply": reply, "progress": pid}
+            if intent in ("question_about_findings", "question_about_run"):
                 self._say(pid, "answering")
                 findings = self.drive.path("findings/findings.md")
                 reply = self.qa.answer(self._person(sender), text,
                                        findings.read_text() if findings.exists() else "")
                 self._notify(sender, "answer", reply)
                 self._step(pid, reply, state="done")
-                return {"intent": routed["intent"], "reply": reply, "progress": pid}
-            if routed["intent"] != "new_analysis":
+                return {"intent": intent, "reply": reply, "progress": pid}
+            if intent != "new_analysis":
                 reply = self.qa.notice("not_a_request")
                 self._notify(sender, "notice", reply)
                 self._step(pid, reply, state="done")
-                return {"intent": routed["intent"], "reply": reply, "progress": pid}
+                return {"intent": intent, "reply": reply, "progress": pid}
+            return {"intent": "new_analysis", "slots": routed["slots"],
+                    "unclear": routed.get("unclear", []), "progress": pid}
+        except Exception as exc:
+            self._say(pid, "failed", state="failed", reason=f"{type(exc).__name__}: {exc}")
+            raise
 
-            compound = routed["slots"].get("compound")
+    def _goal_for_questions(self, sender: str, active: list[dict]) -> dict | None:
+        """The analysis a question is most likely about: one in progress for this person,
+        else the most recent one they asked or took part in."""
+        if active:
+            return self._load("goals", active[0]["goal"])
+        involved = {q["goal_id"] for q in self.questions() if q["to"] == sender or sender in q["cc"]}
+        mine = [g for g in self.goals() if g["requester"] == sender or g["id"] in involved]
+        return mine[-1] if mine else None
+
+    def start_analysis(self, sender: str, text: str, slots: dict, unclear: list[str],
+                       pid: str) -> dict:
+        """Create the goal and run it. The heavy part: one at a time."""
+        try:
+            compound = slots.get("compound")
             self._say(pid, "understood", about=f" of {compound}" if compound else "")
             goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
-                    "slots": dict(routed["slots"]), "asked_slots": dict(routed["slots"]),
-                    "unclear_slots": list(routed.get("unclear", [])),
+                    "slots": dict(slots), "asked_slots": dict(slots), "unclear_slots": list(unclear),
                     "status": "open", "runs": [], "history": [], "created": _now()}
             self._save("goals", goal)
             t = self._load("progress", pid)
@@ -177,6 +248,43 @@ class Harness:
         except Exception as exc:
             self._say(pid, "failed", state="failed", reason=f"{type(exc).__name__}: {exc}")
             raise
+
+    def run_state(self, goal: dict) -> dict:
+        """What a run has done so far, in plain terms, for the Q&A agent to explain."""
+        plans = []
+        folder = self.drive.path("findings/plans")
+        for meta_path in sorted(folder.glob("*.json")) if folder.exists() else []:
+            if meta_path.name.endswith(".lineage.json"):
+                continue
+            meta = json.loads(meta_path.read_text())
+            if meta.get("goal_id") != goal["id"]:
+                continue
+            import pandas as pd
+            layout = pd.read_csv(self.drive.path(meta["plan"]))
+            wells = layout.groupby(["condition", "conc_uM"]).size().reset_index(name="wells")
+            plans.append({**meta, "wells_by_condition": wells.to_dict(orient="records"),
+                          "replaces": "a new plate; it isn't a change to an existing one"})
+        thread = next((t for t in reversed(self.threads()) if t.get("goal") == goal["id"]), None)
+        claims = self.drive.read_json(files.NOTEBOOK_CLAIMS, {}) or {}
+        findings = self.drive.path("findings/findings.md")
+        return {
+            "findings": findings.read_text() if findings.exists() and goal.get("last_run") else None,
+            "request": goal["question"],
+            "requester": self._person(goal["requester"])["name"],
+            "confirmed_terms": {k: v for k, v in goal["slots"].items() if k in TERM_SLOTS},
+            "threshold": goal["slots"].get("threshold"),
+            "progress_so_far": [x["text"] for x in (thread or {}).get("steps", []) if x.get("milestone", True)],
+            "questions": [{"to": self._person(q["to"])["name"], "about": q["about"], "status": q["status"],
+                           "asked": q["message"], "answer": (q.get("answer") or {}).get("statement")
+                           or (q.get("answer") or {}).get("choice")}
+                          for q in self.questions() if q["goal_id"] == goal["id"]],
+            "contradictions": self.drive.contradictions(),
+            "decisions": self.drive.facts(),
+            "plate_plans": plans,
+            "stats": self.drive.read_json(STATS),
+            "notebook_claim": {k: claims.get(k) for k in ("claimed_drop", "claimed_p", "claimed_verdict",
+                                                         "normalises_per_plate")} if claims else None,
+        }
 
     def upload(self, src, owner: str, description: str, replace: bool = False,
                reevaluate: bool = True) -> dict:
@@ -742,6 +850,13 @@ class Harness:
 
 
 TERM_SLOTS = ("compound", "readout", "comparator")
+QUESTION_WORDS = ("why", "what", "how", "is", "are", "does", "do", "did", "can", "will", "which",
+                  "who", "when", "where", "should", "could", "would", "was", "were")
+
+
+def _looks_like_question(text: str) -> bool:
+    words = text.strip().lower().split()
+    return "?" in text or bool(words and words[0].strip(",.") in QUESTION_WORDS)
 
 
 def _renamed(goal: dict, except_slot: str | None = None) -> dict[str, str]:

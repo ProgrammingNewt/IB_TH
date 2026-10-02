@@ -13,12 +13,17 @@ from __future__ import annotations
 import datetime as dt
 import json
 import shutil
+import threading
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable
 
 FACTS = "facts/answers.json"
 CONTRADICTIONS = "facts/contradictions.json"
 COMMENTS = "facts/comments.json"
+
+
+_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)   # one per file, per process
 
 
 def _now() -> str:
@@ -138,6 +143,14 @@ class Drive:
         tmp = p.with_name(f".{p.name}.tmp")
         tmp.write_text(json.dumps(obj, indent=2, default=str))
         tmp.replace(p)
+
+    def update_json(self, rel: str, change: Callable[[Any], Any], default: Any = None) -> Any:
+        """Read, change and write a file under a lock, so two threads (a run and a chat
+        answer) can't overwrite each other's update. Returns the new value."""
+        with _LOCKS[str(self.path(rel))]:
+            value = change(self.read_json(rel, default))
+            self.write_json(rel, value)
+            return value
 
     def write_artifact(self, rel: str, write: Callable[[Path], None], *, tool: str,
                        inputs: list[str], facts_used: list[str] | None = None) -> str:

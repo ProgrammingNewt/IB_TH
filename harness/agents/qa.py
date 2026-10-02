@@ -118,6 +118,9 @@ PROGRESS = {
     "writing": "Writing up the findings",
     "done": "Done: {verdict}. The findings are in the Findings tab.",
     "failed": "Stopped: {reason}",
+    "looking": "Looking at the analysis in progress.",
+    "busy_new_request": "I'm still working on the current analysis. Send this again when it's done, "
+                        "and I'll start it then.",
 }
 
 TASKS: dict[str, tuple[str, Callable[[dict], str | None]]] = {
@@ -126,6 +129,7 @@ TASKS: dict[str, tuple[str, Callable[[dict], str | None]]] = {
     "copy": (prompts.QA_COPY, _message),
     "note": (prompts.QA_NOTE, _message),
     "answer": (prompts.QA_ANSWER, _message),
+    "explain": (prompts.QA_EXPLAIN, _message),
     "parse_other": (prompts.QA_PARSE_OTHER, _parsed_value),
 }
 
@@ -237,6 +241,13 @@ class QA:
             return "There are no findings yet for this drive."
         return self.run("answer", {"from": person, "question": question, "findings": findings_md},
                         {"message": "I couldn't answer that just now."})["message"].strip()
+
+    def explain(self, person: dict, question: str, state: dict,
+                renamed: dict[str, str] | None = None) -> str:
+        """Answer a question about a run in progress, from its live state."""
+        return self.run("explain", {"from": person, "question": question, "run_state": state},
+                        {"message": "I couldn't answer that just now. The run itself isn't affected."},
+                        renamed=renamed)["message"].strip()
 
     def parse_other(self, question: dict, reply: str) -> dict[str, Any]:
         example = next((c["value"] for c in question["choices"] if c.get("value")), None)

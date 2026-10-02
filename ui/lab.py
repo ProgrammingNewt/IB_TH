@@ -187,14 +187,26 @@ def conversation():
 
 with tab_ask:
     conversation()
-    prompt = st.chat_input("Ask the harness, e.g. Is ABC-12 a hit?")
+    prompt = st.chat_input("Ask the harness, e.g. Is ABC-12 a hit? Or ask about the analysis in progress.")
     if prompt and prompt.strip():
-        if runner.busy():
-            st.warning("The harness is busy with another job. Try again when it finishes.")
-        else:
-            pid = h.receive(me, prompt.strip())          # instant acknowledgement, no model call
-            submit(f"Request: {prompt.strip()}",
-                   lambda hh, who, t=prompt.strip(), p=pid: hh.message(who, t, progress_id=p))
+        text_in = prompt.strip()
+        pid = h.receive(me, text_in)                     # instant acknowledgement, no model call
+        d, who, r = drive_name, me, refuse
+
+        def chat_job():
+            # Routing and answers run in the chat lane, alongside any analysis. Only a new
+            # analysis goes to the main lane, and only if it's free.
+            hh = c.harness_for(d, r)
+            out = hh.chat(who, text_in, pid)
+            if out["intent"] != "new_analysis":
+                return
+            started = runner.submit(d, f"Request: {text_in}", who, lambda: c.harness_for(d, r).start_analysis(
+                who, text_in, out["slots"], out.get("unclear", []), pid))
+            if not started:
+                hh._say(pid, "busy_new_request", state="done")
+
+        runner.submit_chat(d, text_in, who, chat_job)
+        st.rerun()
 
     inbox = list(reversed(h.inbox(me)))
     with st.expander(f"Inbox ({len(inbox)})", expanded=False):

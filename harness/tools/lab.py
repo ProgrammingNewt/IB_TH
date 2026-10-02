@@ -37,10 +37,17 @@ def plan_followup_plate(drive: Drive, kind: str, compound: str, treatment_hours:
     rel = f"findings/plans/plan-{n:03d}-{kind}.csv"
     drive.write_artifact(rel, lambda p: layout.to_csv(p, index=False),
                          tool="plan_followup_plate", inputs=["derived/stats.json"])
+    design = (f"16 vehicle wells and 16 {compound} wells at 1 µM on one plate, read at "
+              f"{treatment_hours} h. Equal arms, and vehicle on the same plate so {compound} can be "
+              "normalised to it (SOP-ASSAY-004 needs at least 8 vehicle wells per plate)"
+              if kind == "rerun" else
+              f"16 vehicle wells and {compound} at 10 doses (10 µM, 2-fold down) in triplicate, read "
+              f"at {treatment_hours} h, with vehicle on the same plate for normalisation")
     drive.write_json(rel.replace(".csv", ".json"), {
         "plan": rel, "kind": kind, "compound": compound, "treatment_hours": treatment_hours,
         "status": "pending_approval", "wells": len(layout),
-        "vehicle_wells": int((layout.condition == "vehicle").sum())})
+        "vehicle_wells": int((layout.condition == "vehicle").sum()), "design": design,
+        "outer_wells": "left empty (SOP-ASSAY-004 rule 4)"})
     return {"plan": rel, "kind": kind, "wells": len(layout),
             "vehicle_wells_on_plate": int((layout.condition == "vehicle").sum()),
             "status": "pending_approval"}

@@ -7,7 +7,7 @@ themselves are enforced in code (`harness/guardrails`, the drive, and the run lo
 ROUTER = """You are the Router in a lab harness. Classify one message from a scientist.
 
 Reply in JSON only:
-{"intent": "new_analysis" | "question_about_findings" | "other",
+{"intent": "new_analysis" | "question_about_findings" | "question_about_run" | "other",
  "slots": {"compound": string or null, "readout": string or null,
            "comparator": string or null, "threshold": null}}
 
@@ -15,6 +15,9 @@ Reply in JSON only:
   from data, e.g. "Is ABC-12 a hit?".
 - "question_about_findings": they ask about a conclusion the team already has, e.g.
   "Why did you exclude plate P2?".
+- "question_about_run": they ask about an analysis that's still in progress (listed under
+  "active_analyses"): why something is being asked, what a proposed plan contains, what's
+  happening or what something means, e.g. "Is the re-run plate just excluding P2?".
 - "other": anything else.
 Slots: "compound" is the substance tested; "readout" is what was measured (a marker, an
 assay, a signal); "comparator" is what it's compared with (vehicle, a control, another
@@ -90,6 +93,15 @@ QA_LABELS = """You are the Q&A agent in a lab harness. Write a short button labe
 words) for each answer choice, in the same order, for the named scientist. Each label must
 state the choice's numbers exactly, e.g. a value {"min_drop": 0.3, "max_p": 0.05} becomes
 "At least a 30% drop, p < 0.05". Reply in JSON only: {"labels": ["...", "..."]}"""
+
+QA_EXPLAIN = """You are the Q&A agent in a lab harness. A scientist asked about an analysis
+that's still in progress. Answer from the run state given, and only from it: what has been
+read and found, what is being asked and why, who it's waiting for, and what a proposed
+plate plan contains (count its wells by condition and concentration). Be specific: plates,
+numbers, names. If the state doesn't answer the question, say so and say who could. You
+explain; you never make or change a decision. If they want something changed, tell them
+which open question to answer, or that the requester can say so. 2 to 4 sentences.
+Reply in JSON only: {"message": "..."}"""
 
 QA_ANSWER = """You are the Q&A agent in a lab harness. Answer the scientist's question
 using only the findings given. If the findings don't answer it, say so. 2 to 4 sentences.

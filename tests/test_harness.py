@@ -557,3 +557,96 @@ def test_findings_title_uses_the_confirmed_terms(setup):
     md = h._render(goal)
     assert md.startswith("# Findings: ABC-12 vs vehicle · readout: SA-beta-gal")
     assert 'Asked as: "is abv 12 a hit?"' in md
+
+
+def _waiting_run_with_plan(h):
+    """A run that's waiting for an approval, with a re-run plate plan drafted."""
+    from harness.state import RunState
+    from harness.tools.registry import call
+    goal = {"id": "g-001", "requester": "A", "question": "Is ABC-12 a hit?",
+            "slots": {"compound": "ABC-12", "readout": "SA-beta-gal", "comparator": "vehicle",
+                      "threshold": THRESHOLD}, "asked_slots": {"compound": "ABC-12"},
+            "status": "open", "runs": ["r-001"], "history": []}
+    h._save("goals", goal)
+    run = {"id": "r-001", "goal_id": "g-001", "status": "waiting", "messages": [{"role": "system", "content": "x"}],
+           "pending": {"tool_call_id": "t", "questions": []}, "tool_calls": 0, "turns": 1, "progress_id": None}
+    h._save("runs", run)
+    s = RunState(goal=goal["slots"])
+    plan = call(h.drive, s, "plan_followup_plate", {"kind": "rerun", "compound": "ABC-12"})
+    meta = h.drive.read_json(plan["plan"].replace(".csv", ".json"))
+    meta.update(goal_id="g-001", run_id="r-001")
+    h.drive.write_json(plan["plan"].replace(".csv", ".json"), meta)
+    return goal, run
+
+
+@pytest.mark.parametrize("router_says", ["question_about_run", "new_analysis", "question_about_findings"])
+def test_a_question_about_the_run_is_answered_without_touching_it(setup, router_says):
+    """Even if the Router misreads it as a new analysis, a message about the same compound
+    while a run is going is answered from the run's state, and no goal is started."""
+    h, client, _, _ = setup
+    goal, run = _waiting_run_with_plan(h)
+    before = h._load("runs", "r-001")
+    client.replies += [say(intent=router_says, slots={}),
+                       say(message="No. The re-run is a new plate: 16 vehicle and 16 ABC-12 wells "
+                                   "at 1 µM, read at 72 h. Excluding P2 was Ben's separate decision.")]
+    pid = h.receive("A", "Is the proposed experiment just excluding P2?")
+    out = h.chat("A", "Is the proposed experiment just excluding P2?", pid)
+    assert out["intent"] == "question_about_run"
+    assert out["reply"].startswith("No. The re-run is a new plate")
+    assert h._load("runs", "r-001") == before                  # the run wasn't touched
+    assert len(h.goals()) == 1                                  # no second goal
+    state = json.loads(client.calls[-1]["messages"][1]["content"])["run_state"]
+    plan = state["plate_plans"][0]
+    assert plan["kind"] == "rerun" and plan["status"] == "pending_approval"
+    assert {(w["condition"], w["wells"]) for w in plan["wells_by_condition"]} == {("vehicle", 16), ("ABC-12", 16)}
+    assert h.threads("A")[-1]["state"] == "done" and h.inbox("A")[-1]["kind"] == "answer"
+
+
+def test_a_different_compound_while_a_run_is_going_is_a_new_request(setup):
+    h, client, _, _ = setup
+    _waiting_run_with_plan(h)
+    client.replies += [say(intent="new_analysis", slots={"compound": "XYZ-99"})]
+    pid = h.receive("A", "Is XYZ-99 a hit?")
+    out = h.chat("A", "Is XYZ-99 a hit?", pid)
+    assert out["intent"] == "new_analysis" and out["slots"] == {"compound": "XYZ-99"}
+    assert len(h.goals()) == 1                                  # returned, not started
+
+
+def test_inbox_writes_from_two_threads_are_not_lost(setup):
+    import threading
+    h, _, _, _ = setup
+    workers = [threading.Thread(target=lambda i=i: [h._notify("A", "fyi", f"{i}-{j}") for j in range(25)])
+               for i in range(4)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    assert len(h.inbox("A")) == 100
+
+
+
+def test_router_keeps_the_last_valid_intent_when_retries_run_out(setup):
+    h, client, _, _ = setup
+    client.replies += [say(intent="new_analysis", slots={"compound": "ABC-12"}), say(message="not a router reply")]
+    out = h.router.run(h._person("A"), "is the plan just excluding P2?")
+    assert out == {"intent": "new_analysis", "slots": {}, "unclear": ["compound"]}
+
+
+
+def test_a_pending_approval_keeps_the_analysis_in_progress(setup):
+    """The run finished, but the plan's approval is still open: questions go to the run state."""
+    h, client, _, _ = setup
+    goal, run = _waiting_run_with_plan(h)
+    h._save("runs", {**run, "status": "done"})
+    h._save("questions", {"id": "q-001", "run_id": "r-001", "goal_id": "g-001", "to": "A", "cc": [],
+                          "about": "approval:findings/plans/plan-001-rerun.csv", "text": "Approve?",
+                          "message": "Ana, approve the plan?", "choices": [], "status": "open"})
+    assert h.active_analyses("A")[0]["status"] == "awaiting answers"
+    client.replies += [say(intent="other", slots={}),
+                       say(message="It's a new plate with equal vehicle and ABC-12 arms.")]
+    pid = h.receive("A", "is the proposed experiment just excluding p2 right?")
+    out = h.chat("A", "is the proposed experiment just excluding p2 right?", pid)
+    # The Router said "other", but the message is a question and an analysis is in progress.
+    state = json.loads(client.calls[-1]["messages"][1]["content"])["run_state"]
+    assert out["intent"] == "question_about_run"
+    assert "Equal arms" in state["plate_plans"][0]["design"]

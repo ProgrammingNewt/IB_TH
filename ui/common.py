@@ -209,6 +209,16 @@ class JobRunner:
         threading.Thread(target=work, daemon=True).start()
         return True
 
+    def submit_chat(self, drive: str, label: str, by: str, fn: Callable[[], object]) -> None:
+        """Run a chat message in its own lane, so a question is answered even while the main
+        lane is busy with an analysis. Chat work is read-only for every analysis."""
+        def work():
+            try:
+                fn()
+            except Exception:                                        # noqa: BLE001
+                traceback.print_exc()
+        threading.Thread(target=work, daemon=True, name=f"chat: {label}").start()
+
     def clear_history(self) -> None:
         with self.lock:
             if self.current is None:
