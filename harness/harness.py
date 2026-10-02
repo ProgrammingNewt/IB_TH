@@ -263,7 +263,13 @@ class Harness:
                             for i in c.get("issues", []))
             excluded.append({"plate": plate, "file": f["scope"]["file"], "batch": f["scope"]["batch"],
                              "decided_by": self._person(f["confirmed_by"])["name"], "why": why})
+        used = [k.split(":")[1] for k in stats.get("plates_used", [])]
+        gone = [x["plate"] for x in excluded] + [k.split(":")[1] for k in stats.get("plates_refused_no_vehicle", [])]
+        summary = (f"The analysis uses {' and '.join(used)} only" + (f"; {', '.join(sorted(set(gone)))} "
+                   "is excluded" if gone else "") + ". Running the analysis again now would use the same plates."
+                   if used else "The analysis hasn't run yet.")
         return {
+            "in_one_sentence": summary,
             "plates_in_current_result": [k.split(":")[1] + f" ({k.split(':')[0]})"
                                          for k in stats.get("plates_used", [])],
             "plates_left_out_for_no_vehicle": stats.get("plates_refused_no_vehicle", []),
@@ -280,7 +286,7 @@ class Harness:
         if meta.get("kind") == "rerun":
             redo = f"Re-does the work of {', '.join(sorted(set(out)))}, which was left out of the analysis, " \
                 if out else "Repeats the experiment "
-            return (redo + f"properly: {meta.get('treatment_hours', 72)} h, with vehicle on the same plate. "
+            return (redo + f"on a new plate, properly: {meta.get('treatment_hours', 72)} h, with vehicle on the same plate. "
                     f"It is not a repeat of {', '.join(used) or 'the analysed plates'}. Once its data are "
                     f"uploaded, the analysis will use {' and '.join(used + ['the new plate']) if used else 'the new plate'}"
                     + (f"; {', '.join(sorted(set(out)))} stays excluded." if out else "."))
@@ -300,8 +306,14 @@ class Harness:
             import pandas as pd
             layout = pd.read_csv(self.drive.path(meta["plan"]))
             wells = layout.groupby(["condition", "conc_uM"]).size().reset_index(name="wells")
-            plans.append({**meta, "wells_by_condition": wells.to_dict(orient="records"),
-                          "purpose": meta.get("purpose") or self._plan_purpose(meta)})
+            plans.append({
+                "what_it_is": ("the replacement plate: a new plate to redo excluded work"
+                               if meta.get("kind") == "rerun" else "a dose-response plate"),
+                "status": meta.get("status"), "approver": meta.get("approver"),
+                "treatment_hours": meta.get("treatment_hours"), "wells": meta.get("wells"),
+                "wells_by_condition": wells.to_dict(orient="records"),
+                "design": meta.get("design"),
+                "purpose": meta.get("purpose") or self._plan_purpose(meta)})
         thread = next((t for t in reversed(self.threads()) if t.get("goal") == goal["id"]), None)
         claims = self.drive.read_json(files.NOTEBOOK_CLAIMS, {}) or {}
         findings = self.drive.path("findings/findings.md")

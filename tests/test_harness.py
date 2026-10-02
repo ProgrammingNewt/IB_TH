@@ -597,7 +597,7 @@ def test_a_question_about_the_run_is_answered_without_touching_it(setup, router_
     assert len(h.goals()) == 1                                  # no second goal
     state = json.loads(client.calls[-1]["messages"][1]["content"])["run_state"]
     plan = state["plate_plans"][0]
-    assert plan["kind"] == "rerun" and plan["status"] == "pending_approval"
+    assert plan["what_it_is"].startswith("the replacement plate") and plan["status"] == "pending_approval"
     assert {(w["condition"], w["wells"]) for w in plan["wells_by_condition"]} == {("vehicle", 16), ("ABC-12", 16)}
     assert h.threads("A")[-1]["state"] == "done" and h.inbox("A")[-1]["kind"] == "answer"
 
@@ -675,6 +675,10 @@ def test_qa_gets_what_the_analysis_used_and_what_a_plan_is_for(setup):
     assert "treatment_hours was 48" in so_far["excluded_by_the_team"][0]["why"]
     purpose = state["plate_plans"][0]["purpose"]
     assert purpose.startswith("Re-does the work of P2")
+    assert so_far["in_one_sentence"] == ("The analysis uses P1 only; P2 is excluded. Running the "
+                                         "analysis again now would use the same plates.")
+    assert state["plate_plans"][0]["what_it_is"].startswith("the replacement plate")
+    assert "kind" not in state["plate_plans"][0] and "plan" not in state["plate_plans"][0]
     assert "not a repeat of P1" in purpose and "will use P1 and the new plate; P2 stays excluded" in purpose
     assert state["reader"] == {"name": "Ana Ruiz", "is_the_requester": True}
 
