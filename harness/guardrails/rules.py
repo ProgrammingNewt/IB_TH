@@ -60,6 +60,12 @@ def check(name: str, args: dict, drive: Drive, state: RunState,
         if missing:
             return Decision(False, f"run_stats is blocked: the goal is missing {missing}. "
                                    f"Ask the requester")
+        asked = state.goal["compound"]
+        if args.get("compound") != asked:
+            return Decision(False, f"run_stats must analyse the compound the requester asked about "
+                                   f"({asked!r}), not {args.get('compound')!r}. If the data doesn't "
+                                   f"have {asked!r}, ask the requester which compound they mean "
+                                   f"(about='slot:compound'). Never substitute one yourself")
         th = state.goal["threshold"]
         if args.get("min_drop") != th["min_drop"] or args.get("max_p") != th["max_p"]:
             return Decision(False, "run_stats must use the threshold the requester gave: "

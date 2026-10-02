@@ -249,7 +249,9 @@ class Harness:
                     "reason": f"{qid} is for {q['to']}, so only they can answer it"}
         elif kind == "slot":
             value = next(c.get("value") for c in q["choices"] if c["key"] == choice)
-            if choice == "other":
+            if choice == "other" and ref != "threshold":
+                value = (text or "").strip()
+            elif choice == "other":
                 parsed = self.qa.parse_other(q, text or "")
                 value = parsed["value"]
                 if not _valid_slot(ref, value):
@@ -407,6 +409,39 @@ class Harness:
             parts.append(f"{self._person(q['to'])['name']} on {what}")
         return ", ".join(parts)
 
+    def _data_compounds(self) -> list[str]:
+        """Compounds that appear in the parsed readings and the protocol."""
+        found = []
+        readings = self.drive.path("derived/clean_readings.csv")
+        if readings.exists():
+            import pandas as pd
+            found += [c for c in pd.read_csv(readings).condition.unique() if c != "vehicle"]
+        protocol = self.drive.read_json(files.PROTOCOL, {}) or {}
+        if protocol.get("compound"):
+            found.append(protocol["compound"])
+        return sorted(set(found))
+
+    def _check_compound(self, run: dict, goal: dict, result: dict) -> None:
+        """Compare the compound the requester asked about with the ones in the files.
+
+        Same name written differently ("abc 12") is read as the data's name. A compound that
+        isn't in the files at all is flagged to the Planner, which must ask the requester."""
+        asked = goal["slots"].get("compound")
+        known = self._data_compounds()
+        if not asked or not known or asked in known:
+            return
+        same = [k for k in known if _norm(k) == _norm(asked)]
+        if same:
+            goal["slots"]["compound"] = same[0]
+            self._save("goals", goal)
+            self._say(run.get("progress_id"), "compound_read_as", asked=asked, name=same[0])
+            result["goal_check"] = (f"The requester wrote {asked!r}; that's {same[0]} in the data, "
+                                    f"so the goal now says {same[0]}.")
+            return
+        result["goal_check"] = (f"The requester asked about {asked!r}, but the files only have "
+                                f"{', '.join(known)}. Ask the requester which compound they mean "
+                                f"(about='slot:compound') before analysing. Don't substitute one.")
+
     def _after_tool(self, run: dict, goal: dict, name: str, args: dict, result: dict) -> None:
         if args.get("path") and self.drive.owner_of(args["path"]):
             # Which team files this goal's analysis actually read, for "Files not used".
@@ -415,6 +450,8 @@ class Harness:
             self._save("goals", goal)
         if not result.get("ok"):
             return
+        if name in ("parse_xlsx", "extract_protocol_fields"):
+            self._check_compound(run, goal, result)
         if name == "extract_protocol_fields":
             # The protocol fills the slots it states, so they're never asked for.
             for slot in ("compound", "readout", "comparator"):
@@ -474,6 +511,17 @@ class Harness:
                     run, goal, to=c["decides"], cc=[o for o in c["owners"] if o != c["decides"]],
                     about=about, text=text or f"Plate {c['plate_id']} in {c['file']}: {issues}. What should we do?",
                     choices=[{"key": k, "label": v} for k, v in c["choices"].items()])
+            elif kind == "slot" and ref == "compound":
+                # The options are the compounds actually in the files, not the Planner's guesses.
+                asked = goal["slots"].get("compound")
+                choices = [{"key": f"c{i + 1}", "label": k, "value": k}
+                           for i, k in enumerate(self._data_compounds())]
+                choices.append({"key": "other", "label": "Something else (type it)", "value": None})
+                q = self._new_question(run, goal, to=goal["requester"], cc=[], about=about,
+                                       text=text or f"You asked about {asked!r}, but the files only "
+                                                    f"have {', '.join(c['label'] for c in choices[:-1])}. "
+                                                    "Which compound did you mean?",
+                                       choices=choices)
             elif kind == "slot" and ref in REQUIRED_SLOTS:
                 choices = [c for c in item.get("choices") or [] if _valid_slot(ref, c.get("value"))]
                 if not choices:
@@ -602,6 +650,11 @@ class Harness:
         self.drive.path("findings/findings.md").write_text(md)
         self.drive.path(f"findings/history/{goal['last_run']}.md").write_text(md)
         return md
+
+
+def _norm(name: str) -> str:
+    """'abc 12', 'ABC12' and 'ABC-12' are the same compound name."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
 def _valid_slot(slot: str, value: Any) -> bool:

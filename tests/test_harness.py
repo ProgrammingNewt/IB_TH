@@ -306,3 +306,53 @@ def test_receive_acknowledges_before_any_model_call(setup):
     t = h.threads("A")[0]
     assert t["id"] == pid and t["state"] == "working"
     assert t["steps"][0]["text"] == "Got it. Working on: Is ABC-12 a hit?"
+
+
+def _goal_after_parsing(h, asked):
+    from harness.state import RunState
+    from harness.tools.registry import call
+    goal = {"id": "g-001", "requester": "A", "question": f"Is {asked} a hit?",
+            "slots": {"compound": asked}, "status": "open", "runs": [], "history": []}
+    h._save("goals", goal)
+    run = {"id": "r-001", "goal_id": "g-001", "status": "done", "messages": [], "pending": None,
+           "progress_id": h.receive("A", f"Is {asked} a hit?")}
+    s = RunState(goal=goal["slots"])
+    results = []
+    for tool, path in [("extract_protocol_fields", "raw/protocol.pdf"), ("parse_xlsx", "raw/readings.xlsx")]:
+        r = call(h.drive, s, tool, {"path": path})
+        h._after_tool(run, goal, tool, {"path": path}, r)
+        results.append(r)
+    return goal, run, results
+
+
+def test_a_compound_not_in_the_data_is_never_substituted(setup):
+    """'abs 12' isn't ABC-12. The Planner is told to ask, run_stats can't swap it, and the
+    question offers the compounds that are actually in the files."""
+    h, client, _, _ = setup
+    goal, run, results = _goal_after_parsing(h, "abs 12")
+    assert "asked about 'abs 12', but the files only have ABC-12" in results[0]["goal_check"]
+    assert goal["slots"]["compound"] == "abs 12"                       # not silently changed
+
+    from harness.state import RunState
+    from harness.tools.registry import call
+    s = RunState(goal={**goal["slots"], "threshold": THRESHOLD})
+    h.drive.resolve_contradiction("c-readings-P2", "B", "exclude") if h.drive.contradictions() else None
+    blocked = call(h.drive, s, "run_stats", {"compound": "ABC-12", **THRESHOLD})
+    assert "must analyse the compound the requester asked about ('abs 12')" in blocked["blocked"]
+
+    client.replies += [say(message="Hi Ana, you asked about abs 12, but the data only has ABC-12. "
+                                   "Which compound did you mean?")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "slot:compound", "text": ""}]})
+    q = h._load("questions", qid)
+    assert q["to"] == "A" and [c["label"] for c in q["choices"]] == ["ABC-12", "Something else (type it)"]
+    assert h.answer(qid, "A", "c1")["recorded_as"] == "fact"
+    assert h._load("goals", "g-001")["slots"]["compound"] == "ABC-12"
+
+
+def test_the_same_name_written_differently_is_read_as_the_data_name(setup):
+    h, _, _, _ = setup
+    goal, run, results = _goal_after_parsing(h, "abc 12")
+    assert goal["slots"]["compound"] == "ABC-12"
+    assert "that's ABC-12 in the data" in results[0]["goal_check"]
+    steps = [x["text"] for x in h.threads("A")[0]["steps"]]
+    assert 'Reading "abc 12" as ABC-12, the compound in the data.' in steps
