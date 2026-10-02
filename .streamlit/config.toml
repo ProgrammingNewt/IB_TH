@@ -1,0 +1,7 @@
+[server]
+# Only this machine can reach the app. Docker overrides this with --server.address 0.0.0.0.
+address = "localhost"
+port = 8501
+
+[browser]
+gatherUsageStats = false

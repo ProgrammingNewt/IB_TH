@@ -8,7 +8,7 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Create `.venv` and install dependencies
 - [x] First local commit (skeleton + this checklist)
 
-**Now working on:** step 5, Streamlit UI.
+**Now working on:** step 6, evals.
 
 ## 1. Toy data (first, because the tools are tested against it): done
 - [x] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C, executed so it has saved outputs), lab SOP, `manifest.json`
@@ -78,14 +78,16 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Only the Q&A agent writes to scientists. The copy to other owners and the note to a file's owner were the Planner's raw text; they're now Q&A tasks (`copy`, `note`). The threshold buttons' labels are written by Q&A from the values (`labels`, rejected if a number is missing), with a fixed format as the fallback. The 3 system notices are fixed templates in `qa.py`. 38 tests pass
 - [x] Live check of the new Q&A tasks: labels came back with their numbers. The copy to A first said "Ben *asked*" when Ben was the one being asked; fixed by naming the input `question_sent_to` and saying so in `QA_COPY`. 3 of 3 live retries correct
 
-## 5. Streamlit UI
-- [ ] One tab per scientist (`?as=A`, `?as=B`, `?as=C`)
-- [ ] Views: Drive, My questions (with answer choices), Approval inbox, Findings, Trace
-- [ ] Upload a file (for the run-2 demo)
-- [ ] Toy-data playground page:
-  - generate a drive from the UI (pick the scenario and seed, click Generate), calling the same `datagen` code
-  - plot the readings per plate (vehicle vs ABC-12, coloured by batch) and show the run metadata
-  - show the scenario's checks (pass or fail) and the answer key, so it's easy to experiment with different seeds
+## 5. Streamlit UI: done
+- [x] `streamlit run ui/app.py`. One tab per scientist with `?as=A`, `?as=B`, `?as=C`, plus a drive picker
+- [x] Harness work runs in a background thread (one job at a time, shared by every tab), so a 1-2 minute Planner run doesn't freeze the page. Each tab refreshes itself when a job finishes
+- [x] Tabs: Ask (send a request, goals, inbox), My questions (answer buttons, "something else" box, plate map for approvals, what you were copied on), Drive (team files with previews, harness-made files with lineage, upload), Findings (findings.md, plate plans, notes, earlier versions), Trace (runs, every model and tool call, the Planner's conversation)
+- [x] Demo switch in the sidebar: "Provider 1 refuses biology" swaps provider 1 for the refusing fake, to show the fallback live
+- [x] Demo upload button for the scenario's re-run file
+- [x] Toy-data playground page: pick a scenario and seed, Generate (same `datagen` code and checks), readings plotted per plate, summary, run metadata, answer key
+- [x] Bound to `localhost` by `.streamlit/config.toml`
+- [x] Tests: `tests/test_ui.py` renders both pages as every scientist with no exceptions, and checks the job runner. 45 tests pass. The server boots and serves the page
+- [ ] You: click through the demo in a browser (steps in the README). The live clicks haven't been tested headless, because they make real model calls
 
 ## 6. Evals
 - [ ] `planted_batch_issue/`: asked the right people, correct stats, no causal wording, re-run plan with vehicle on the plate

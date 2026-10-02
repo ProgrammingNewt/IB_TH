@@ -11,3 +11,4 @@ __pycache__/
 # Generated drives and run output (rebuilt by `python -m datagen`)
 drives/
 runs/
+workspace/

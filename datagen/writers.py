@@ -129,9 +129,12 @@ def write_manifest(path: Path, drive: str, files: list[dict]) -> None:
     path.write_text(json.dumps({"drive": drive, "people": PEOPLE, "files": files}, indent=2))
 
 
-def write_scenario(s: Scenario, out: Path) -> Path:
-    """Write the drive for one scenario. Returns the drive folder."""
-    drive = out / s.name
+def write_scenario(s: Scenario, out: Path, drive_name: str | None = None) -> Path:
+    """Write the drive for one scenario, in `out/<drive_name or scenario name>`.
+
+    Returns the drive folder."""
+    name = drive_name or s.name
+    drive = out / name
     (drive / "raw").mkdir(parents=True)
     (drive / "sops").mkdir()
 
@@ -139,7 +142,7 @@ def write_scenario(s: Scenario, out: Path) -> Path:
     write_readings_xlsx(drive / "raw" / "readings.xlsx", s.readings, s.metadata)
     write_notebook(drive / "raw" / "analysis.ipynb", s.notebook_style, s.notebook_claim)
     (drive / "sops" / "SOP-ASSAY-004.md").write_text(SOP)
-    write_manifest(drive / "manifest.json", s.name, [
+    write_manifest(drive / "manifest.json", name, [
         {"path": "raw/protocol.pdf", "owner": "A", "modified": "2026-09-02",
          "description": "Experiment protocol: the question, treatment and readout"},
         {"path": "raw/readings.xlsx", "owner": "B", "modified": "2026-09-16",
@@ -153,8 +156,8 @@ def write_scenario(s: Scenario, out: Path) -> Path:
     # Files that arrive later (run 2) and the answer key live beside the drive, not in it,
     # so the harness can't read them until they're uploaded or scored.
     if s.rerun_readings is not None:
-        incoming = out / f"{s.name}.incoming"
+        incoming = out / f"{name}.incoming"
         incoming.mkdir()
         write_readings_xlsx(incoming / "readings_rerun.xlsx", s.rerun_readings, s.rerun_metadata)
-    (out / f"{s.name}.expected.json").write_text(json.dumps(s.expected, indent=2))
+    (out / f"{name}.expected.json").write_text(json.dumps(s.expected, indent=2))
     return drive

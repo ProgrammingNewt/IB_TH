@@ -19,4 +19,18 @@ A collaborative, science-focused agent harness. Several scientists and four LLM 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env            # add DEEPSEEK_API_KEY and/or CEREBRAS_API_KEY
+python -m harness.gateway       # check the providers answer
+streamlit run ui/app.py         # http://localhost:8501
 ```
+
+Open one tab per scientist: `http://localhost:8501/?as=A` (Ana, biologist, asks the question), `?as=B` (Ben, screening, owns the readings), `?as=C` (Chen, data science, owns the notebook).
+
+The demo, in the UI:
+1. As Ana, ask "Is ABC-12 a hit?" on the `planted_batch_issue` drive.
+2. As Ben, answer the plate P2 question. As Ana, pick a threshold. The run resumes.
+3. As Ana, approve the re-run plate plan. Read the findings; Chen gets a note on the notebook.
+4. As Ben, upload the demo re-run file (Drive tab). Run 2 asks nothing and updates the findings.
+5. Optional: in the sidebar, turn on "Provider 1 refuses biology" and watch the Trace tab fall back to provider 2.
+
+The toy-data playground page generates new drives from a scenario and a seed, and plots their readings.
