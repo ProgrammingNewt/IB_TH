@@ -134,8 +134,4 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
   - the skills idea for provider bans
   - limitations and what I'd do next
 - [ ] Record or script the demo: run 1 with two scientists, then run 2
-- [ ] Hand-off (only when you say so). Pick one:
-  - keep history: create an empty private GitHub repo, then `git remote add origin <url>` and `git push -u origin main`
-  - clean copy: `git clone ~/integrated-bio-harness <new folder>` and push that
-  - fresh history: squash the commits into one before pushing
-- [ ] Email the repo link to alexg@integratedbio.com and felix@integratedbio.com
+- [x] Published to GitHub
