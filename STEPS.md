@@ -8,7 +8,7 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Create `.venv` and install dependencies
 - [x] First local commit (skeleton + this checklist)
 
-**Now working on:** step 2, drive, tools and guardrails.
+**Now working on:** step 3, LLM gateway.
 
 ## 1. Toy data (first, because the tools are tested against it)
 - [x] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C, executed so it has saved outputs), lab SOP, `manifest.json`
@@ -24,18 +24,19 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [ ] Later: try a few other seeds to make extra planted and clean drives
 
 ## 2. Drive, tools, guardrails (no LLM yet)
-- [ ] Drive layer: read the manifest, look up file owners, write files with a `.lineage.json`
-- [ ] File tools: `parse_xlsx`, `read_notebook`, `extract_protocol_fields` (has an LLM inside, stubbed for now)
-- [ ] Analysis tools: `check_consistency`, `filter_dataset`, `run_stats` (each plate compared with its own vehicle wells), `run_notebook`
-- [ ] Lab tools: `plan_followup_plate` (vehicle on the same plate), `search_sops`, `load_skill`
-- [ ] Guardrails:
-  - goal check (required slots filled)
-  - analysis blocked while a contradiction is unresolved
-  - only a file's owner can confirm facts about it
-  - facts scoped to file + plate + batch
-  - plate plans need approval
+- [x] Drive layer (`harness/drive/store.py`): manifest, file owners, uploads, `.lineage.json` on every derived file, facts and contradictions
+- [x] File tools: `parse_xlsx`, `read_notebook`, `extract_protocol_fields` (uses an offline regex extractor until the LLM version arrives in step 4)
+- [x] Analysis tools: `check_consistency`, `filter_dataset`, `run_stats` (each plate compared with its own vehicle wells, plates without vehicle refused), `run_notebook`
+- [x] Lab tools: `plan_followup_plate` (vehicle on the same plate, pending approval), `search_sops`, `load_skill` + `skills/batch_qc.md`
+- [x] Guardrails (`harness/guardrails/rules.py`, all code):
+  - unknown tool or bad arguments are rejected
   - step budget
-- [ ] Unit tests for every tool and guardrail against the generated data
+  - `filter_dataset` and `run_stats` blocked while a contradiction is open
+  - `run_stats` blocked until the goal has every required slot, and it must use the requester's threshold
+  - plate plans come back as pending approval
+- [x] Only a file's owner can confirm a fact about it (anyone else's answer is kept as a comment). Facts are scoped to file + plate + batch
+- [x] Tool registry (`harness/tools/registry.py`): the one entry point that runs a tool through the guardrails, plus the OpenAI-format tool list for the Planner
+- [x] Tests: `tests/test_tools.py` walks run 1 and run 2 by hand and checks every number against the answer key
 
 ## 3. LLM gateway
 - [ ] One OpenAI-compatible client, configured by `config.yaml`

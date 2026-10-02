@@ -140,10 +140,10 @@ def planted_batch_issue(seed: int = DEFAULT_SEED) -> Scenario:
         "threshold_question_to": "A",
         "scripted_threshold": SCRIPTED_THRESHOLD,
         "contradictions": [{
-            "field": "treatment_hours", "protocol_value": 72, "data_value": 48,
-            "file": "raw/readings.xlsx", "plate_id": "P2", "batch": 2,
+            "id": "c-readings-P2", "file": "raw/readings.xlsx", "plate_id": "P2", "batch": 2,
+            "issues": ["treatment_hours", "vehicle_wells"],
             "owners": ["A", "B"], "decides": "B",
-            "scripted_answer": "exclude batch 2",
+            "scripted_answer": "exclude",
         }],
         "notebook_claim": {"drop": nb_drop, "p": nb_p, "verdict": _verdict(nb_drop, nb_p)},
         "run1": {"analysed": ["P1"], "drop": b1_drop, "p": b1_p,
