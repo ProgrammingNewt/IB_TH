@@ -388,8 +388,13 @@ class Harness:
                 goal.setdefault("stale", []).append({"change": change, "at": _now()})
                 self._save("goals", goal)
 
-    def answer(self, qid: str, by: str, choice: str, text: str | None = None) -> dict:
-        """A scientist answered a question, by choice key ("other" with `text` for free text)."""
+    def answer(self, qid: str, by: str, choice: str, text: str | None = None,
+               resume: bool = True) -> dict:
+        """A scientist answered a question, by choice key ("other" with `text` for free text).
+
+        Recording an answer is quick and safe while an analysis runs. With `resume=False`,
+        a paused run that this answer completes isn't resumed here: the result says
+        `needs_resume`, and the caller resumes it when the main lane is free."""
         q = self._load("questions", qid)
         if q is None:
             raise ValueError(f"no question {qid}")
@@ -461,8 +466,17 @@ class Harness:
             else:
                 self._say(run.get("progress_id"), "all_answered", state="working",
                           name=self._person(by)["name"])
-        return {"recorded_as": "fact" if "fact" in recorded else "decision", **recorded,
-                **self._maybe_resume(q["run_id"])}
+        done = {"recorded_as": "fact" if "fact" in recorded else "decision", **recorded}
+        if not resume:
+            run = self._load("runs", q["run_id"]) or {}
+            ready = run.get("status") == "waiting" and all(
+                self._load("questions", x)["status"] != "open" for x in run["pending"]["questions"])
+            return done | ({"needs_resume": run["id"]} if ready else {})
+        return done | self._maybe_resume(q["run_id"])
+
+    def resume(self, run_id: str) -> dict:
+        """Resume a paused run whose questions are all answered."""
+        return self._maybe_resume(run_id)
 
     # ---- runs -----------------------------------------------------------------------
 

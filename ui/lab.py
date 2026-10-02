@@ -99,6 +99,8 @@ def job_status():
     if job:
         st.info(f"⏳ **{job.label}** ({people.get(job.by, {}).get('name', job.by)}) · "
                 f"{time.time() - job.started:.0f}s")
+        for i, w in enumerate(runner.waiting(), 1):
+            st.caption(f"Queued {i}: {w.label} ({people.get(w.by, {}).get('name', w.by)})")
     elif runner.history:
         last = runner.history[0]
         if last.error:
@@ -136,14 +138,31 @@ def waiting_for_me():
 
 
 def submit(label: str, fn) -> None:
-    """Run `fn(harness, person)` in the background, bound to who clicked and which drive."""
+    """Run `fn(harness, person)` in the main lane, bound to who clicked and which drive.
+    If another job is running, this one waits its turn and starts by itself."""
     d, who, r = drive_name, me, refuse
-    if runner.submit(d, label, who, lambda: fn(c.harness_for(d, r), who)):
-        st.toast(f"Started: {label}")
-        time.sleep(0.3)
-        st.rerun()
-    else:
-        st.warning("The harness is busy with another job. Try again when it finishes.")
+    ahead = runner.submit(d, label, who, lambda: fn(c.harness_for(d, r), who))
+    st.toast(f"Started: {label}" if ahead == 0 else
+             f"Queued: {label}. It starts when the {ahead} job{'s' if ahead > 1 else ''} ahead finish.")
+    time.sleep(0.3)
+    st.rerun()
+
+
+def answer_now(label: str, qid: str, choice: str, text: str | None = None) -> None:
+    """Record an answer straight away, even while an analysis runs. Only resuming the paused
+    run goes through the main lane, which queues it if it's busy."""
+    d, who, r = drive_name, me, refuse
+
+    def job():
+        out = c.harness_for(d, r).answer(qid, who, choice, text, resume=False)
+        if out.get("needs_resume"):
+            runner.submit(d, f"Resume after {label}", who,
+                          lambda: c.harness_for(d, r).resume(out["needs_resume"]))
+
+    runner.submit_chat(d, label, who, job)
+    st.toast(f"Recorded: {label}")
+    time.sleep(0.5)
+    st.rerun()
 
 
 h = c.harness_for(drive_name, refuse)          # reads only; jobs build their own
@@ -200,10 +219,10 @@ with tab_ask:
             out = hh.chat(who, text_in, pid)
             if out["intent"] != "new_analysis":
                 return
-            started = runner.submit(d, f"Request: {text_in}", who, lambda: c.harness_for(d, r).start_analysis(
+            ahead = runner.submit(d, f"Request: {text_in}", who, lambda: c.harness_for(d, r).start_analysis(
                 who, text_in, out["slots"], out.get("unclear", []), pid))
-            if not started:
-                hh._say(pid, "busy_new_request", state="done")
+            if ahead:
+                hh._say(pid, "queued")
 
         runner.submit_chat(d, text_in, who, chat_job)
         st.rerun()
@@ -261,14 +280,12 @@ with tab_q:
             cols = st.columns(len(choices) or 1)
             for col, ch in zip(cols, choices):
                 if col.button(ch["label"], key=f"{q['id']}-{ch['key']}", width="stretch"):
-                    submit(f"{person['name']} answers {q['id']}: {ch['label']}",
-                           lambda hh, who, qid=q["id"], k=ch["key"]: hh.answer(qid, who, k))
+                    answer_now(f"{person['name']} answers {q['id']}: {ch['label']}", q["id"], ch["key"])
             if any(ch["key"] == "other" for ch in q["choices"]):
                 other = st.text_input("Something else", key=f"{q['id']}-other-text",
                                       placeholder="Type your answer")
                 if st.button("Send", key=f"{q['id']}-other") and other.strip():
-                    submit(f"{person['name']} answers {q['id']}",
-                           lambda hh, who, qid=q["id"], t=other.strip(): hh.answer(qid, who, "other", t))
+                    answer_now(f"{person['name']} answers {q['id']}", q["id"], "other", other.strip())
 
     copied = [q for q in h.questions(status="open") if me in q["cc"]]
     if copied:

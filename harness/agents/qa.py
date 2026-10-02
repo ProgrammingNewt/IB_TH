@@ -128,6 +128,7 @@ PROGRESS = {
     "done": "Done: {verdict}. The findings are in the Findings tab.",
     "failed": "Stopped: {reason}",
     "looking": "Looking at the analysis in progress.",
+    "queued": "Waiting for the current analysis to finish, then starting.",
     "busy_new_request": "I'm still working on the current analysis. Send this again when it's done, "
                         "and I'll start it then.",
 }

@@ -690,3 +690,38 @@ def test_qa_may_not_quote_internal_ids(setup):
     out = h.qa.explain(h._person("A"), "is it just P1?", {})
     assert out == "No, P2 was excluded by Ben because it ran 48 h."
     assert "Don't quote internal ids like 'f-003'" in client.calls[1]["messages"][-1]["content"]
+
+
+
+def test_answers_are_recorded_while_the_run_is_still_working(setup):
+    """An approval answered while the run is reviewing is recorded at once; nothing waits."""
+    h, client, _, _ = setup
+    goal, run = _waiting_run_with_plan(h)
+    h._save("runs", {**run, "status": "running"})                    # the run is busy reviewing
+    plan = "findings/plans/plan-001-rerun.csv"
+    h._save("questions", {"id": "q-001", "run_id": "r-001", "goal_id": "g-001", "to": "A", "cc": [],
+                          "about": f"approval:{plan}", "text": "Approve?", "message": "Ana, approve?",
+                          "choices": [{"key": "approve", "label": "Approve"}, {"key": "reject", "label": "Reject"}],
+                          "status": "open"})
+    out = h.answer("q-001", "A", "approve", resume=False)
+    assert out == {"recorded_as": "decision", "plan": plan, "status": "approved"}
+    assert h.drive.read_json(plan.replace(".csv", ".json"))["status"] == "approved"
+
+
+def test_the_last_answer_asks_for_a_resume_instead_of_running_it(setup):
+    h, client, _, _ = setup
+    goal, run = _waiting_run_with_plan(h)
+    from harness.state import RunState
+    from harness.tools.registry import call
+    s = RunState()
+    for t, p in [("extract_protocol_fields", "raw/protocol.pdf"), ("parse_xlsx", "raw/readings.xlsx")]:
+        call(h.drive, s, t, {"path": p})
+    call(h.drive, s, "check_consistency")
+    client.replies += [say(message="Ben, should we exclude plate P2, or keep it? It ran 48 h."),
+                       say(message="Ana, Ben was asked about plate P2.")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "contradiction:c-readings-P2", "text": ""}]})
+    h._save("runs", {**h._load("runs", "r-001"), "status": "waiting",
+                     "pending": {"tool_call_id": "t", "questions": [qid]}})
+    out = h.answer(qid, "B", "exclude", resume=False)
+    assert out["needs_resume"] == "r-001"
+    assert h._load("runs", "r-001")["status"] == "waiting"              # not resumed here

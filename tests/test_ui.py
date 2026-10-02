@@ -35,19 +35,20 @@ def test_pages_render(workspace, page, who):
             "💬 Ask", "❓ My questions (0)", "📁 Drive", "📊 Findings", "🔍 Trace"]
 
 
-def test_job_runner_runs_one_job_at_a_time():
+def test_job_runner_queues_instead_of_refusing():
     sys.path.insert(0, str(UI))
     from common import JobRunner
     r = JobRunner()
-    assert r.submit("d", "slow", "A", lambda: time.sleep(0.3) or "done")
-    assert not r.submit("d", "second", "B", lambda: None)        # busy
+    order = []
+    assert r.submit("d", "slow", "A", lambda: time.sleep(0.3) or order.append("slow") or "done") == 0
+    assert r.submit("d", "second", "B", lambda: order.append("second")) == 1     # queued, not refused
+    assert r.submit("d", "boom", "A", lambda: 1 / 0) == 2
+    assert [j.label for j in r.waiting()] == ["second", "boom"]
     while r.busy():
         time.sleep(0.05)
-    assert r.history[0].result == "done" and r.last_finished_id() == 1
-    assert r.submit("d", "boom", "A", lambda: 1 / 0)
-    while r.busy():
-        time.sleep(0.05)
-    assert r.history[0].error.startswith("ZeroDivisionError")
+    assert order == ["slow", "second"]                                        # in order
+    assert [j.label for j in r.history] == ["boom", "second", "slow"]
+    assert r.history[0].error.startswith("ZeroDivisionError") and r.history[2].result == "done"
 
 
 def test_start_fresh(workspace, tmp_path):

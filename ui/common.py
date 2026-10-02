@@ -172,29 +172,44 @@ class Job:
 
 
 class JobRunner:
-    """One harness job at a time, in a background thread, shared by every browser tab.
+    """Harness jobs that change an analysis run one at a time, in a background thread, shared
+    by every browser tab. Jobs that arrive while one is running wait in a queue and start by
+    themselves; nothing is turned away.
 
     A Planner run can take a minute or two. Running it here keeps the page responsive and
-    lets the other scientists' tabs see it happening."""
+    lets the other scientists' tabs see it happening. Chat (routing, questions, recording
+    answers) runs separately, in `submit_chat`, so it never waits for this lane."""
 
     def __init__(self):
         self.lock = threading.Lock()
         self.current: Job | None = None
+        self.queue: list[tuple[Job, Callable[[], object]]] = []
         self.history: list[Job] = []
         self._next = 1
 
     def busy(self) -> bool:
         return self.current is not None
 
-    def submit(self, drive: str, label: str, by: str, fn: Callable[[], object]) -> bool:
+    def waiting(self) -> list[Job]:
+        return [job for job, _ in self.queue]
+
+    def submit(self, drive: str, label: str, by: str, fn: Callable[[], object]) -> int:
+        """Start `fn`, or queue it. Returns how many jobs are ahead of it (0: started now)."""
         with self.lock:
-            if self.current is not None:
-                return False
             job = Job(self._next, drive, label, by)
             self._next += 1
-            self.current = job
+            if self.current is None:
+                self.current = job
+                ahead = 0
+            else:
+                self.queue.append((job, fn))
+                return len(self.queue)
+        self._start(job, fn)
+        return ahead
 
+    def _start(self, job: Job, fn: Callable[[], object]) -> None:
         def work():
+            job.started = time.time()
             try:
                 job.result = fn()
             except Exception as exc:                                  # noqa: BLE001
@@ -204,14 +219,16 @@ class JobRunner:
                 job.finished = time.time()
                 with self.lock:
                     self.history.insert(0, job)
-                    self.current = None
+                    nxt = self.queue.pop(0) if self.queue else None
+                    self.current = nxt[0] if nxt else None
+                if nxt:
+                    self._start(*nxt)
 
         threading.Thread(target=work, daemon=True).start()
-        return True
 
     def submit_chat(self, drive: str, label: str, by: str, fn: Callable[[], object]) -> None:
-        """Run a chat message in its own lane, so a question is answered even while the main
-        lane is busy with an analysis. Chat work is read-only for every analysis."""
+        """Run a chat job in its own thread, alongside the main lane: routing a message,
+        answering a question about an analysis, recording an answer."""
         def work():
             try:
                 fn()
