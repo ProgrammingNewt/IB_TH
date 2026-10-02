@@ -2,15 +2,15 @@
 
 Action items for the Lab Drive Harness take-home, in order. Tick each box when it's done.
 
-## 0. Setup
+## 0. Setup: done
 - [x] Create the local repo folder and skeleton
 - [x] Keep the local `.git` (local commits only, no remote)
 - [x] Create `.venv` and install dependencies
 - [x] First local commit (skeleton + this checklist)
 
-**Now working on:** step 3, LLM gateway.
+**Now working on:** step 4, agents and the loop.
 
-## 1. Toy data (first, because the tools are tested against it)
+## 1. Toy data (first, because the tools are tested against it): done
 - [x] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C, executed so it has saved outputs), lab SOP, `manifest.json`
 - [x] Generator for the re-run file (batch 3), kept in `planted_batch_issue.incoming/` until run 2 uploads it
 - [x] Generator for `clean/`, where there's no flaw and a real effect
@@ -23,7 +23,7 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Tests: `tests/test_datagen.py`
 - [ ] Later: try a few other seeds to make extra planted and clean drives
 
-## 2. Drive, tools, guardrails (no LLM yet)
+## 2. Drive, tools, guardrails (no LLM yet): done
 - [x] Drive layer (`harness/drive/store.py`): manifest, file owners, uploads, `.lineage.json` on every derived file, facts and contradictions
 - [x] File tools: `parse_xlsx`, `read_notebook`, `extract_protocol_fields` (uses an offline regex extractor until the LLM version arrives in step 4)
 - [x] Analysis tools: `check_consistency`, `filter_dataset`, `run_stats` (each plate compared with its own vehicle wells, plates without vehicle refused), `run_notebook`
@@ -38,13 +38,19 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Tool registry (`harness/tools/registry.py`): the one entry point that runs a tool through the guardrails, plus the OpenAI-format tool list for the Planner
 - [x] Tests: `tests/test_tools.py` walks run 1 and run 2 by hand and checks every number against the answer key
 - [x] Checkpoint before step 3: 17/17 tests pass, plus a manual walk of run 1 on a scratch drive. Checked the files it leaves behind: the contradiction (P2: 48 h and 0 vehicle wells, B decides), B's fact scoped to file + plate, stats on P1 only (2.4% drop, p = 0.63, not a hit), lineage linking the analysis set to fact f-001, and a re-run plan pending approval. Nothing needed fixing
-- [ ] Not tested yet, and checked in later steps: the LLM-backed protocol extractor (step 4), pause and resume (step 4), and a clean install from a fresh clone (step 7, Docker)
+- Not tested yet, and checked in later steps: the LLM-backed protocol extractor (step 4), pause and resume (step 4), and a clean install from a fresh clone (step 7, Docker)
 
 ## 3. LLM gateway
-- [ ] One OpenAI-compatible client, configured by `config.yaml`
-- [ ] Fallback order OpenAI → DeepSeek → Ollama when a provider refuses
-- [ ] A fake provider that always refuses, for tests and the demo
-- [ ] Log every call (provider, model, tokens) to `trace/`
+- [x] One OpenAI-compatible client (`harness/gateway/gateway.py`), configured by `config.yaml`
+- [x] Providers in order: `model_provider_1` (DeepSeek) → `model_provider_2` (Cerebras) → `local_model` (Ollama, only when `LOCAL_MODEL=1`). A provider without a key is skipped
+- [x] Each agent has a model tier (small or large) and an output budget
+- [x] On a refusal (content-filter stop, policy error, or a refusal reply) it moves to the next provider and benches the refusing one for the session. Timeouts and errors also fall back but don't bench
+- [x] Fake providers for tests and the demo (`harness/gateway/fakes.py`): scripted, refusing (3 styles), failing
+- [x] Every call is logged (agent, provider, model, tokens, latency, outcome) through a JSONL tracer
+- [x] `python -m harness.gateway` checks each provider on its own and reports ok, skipped, refused or error
+- [x] Tests: `tests/test_gateway.py` (10)
+- [ ] Add keys to `.env` (you do this; never paste keys in chat), then run `python -m harness.gateway`
+- [ ] Confirm the model names in `config.yaml` against each provider's current list, and that the chosen models support tool calls
 
 ## 4. Agents and the loop
 - [ ] Router: works out what kind of message it is and pulls goal slots from it

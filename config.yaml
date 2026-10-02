@@ -1,0 +1,44 @@
+# Model providers, tried in this order. Every one speaks the OpenAI chat API, so switching
+# provider only changes base_url, the key and the model names. A provider whose key isn't
+# set is skipped.
+providers:
+  - name: model_provider_1
+    label: DeepSeek
+    base_url: https://api.deepseek.com/v1
+    key_env: DEEPSEEK_API_KEY
+    models: { small: deepseek-flash, large: deepseek-v4-pro }
+
+  - name: model_provider_2
+    label: Cerebras
+    base_url: https://api.cerebras.ai/v1
+    key_env: CEREBRAS_API_KEY
+    models: { small: qwen-3.8-27b, large: gpt-oss-120b }
+
+  - name: local_model
+    label: Ollama
+    base_url: http://localhost:11434/v1
+    key_env: null                       # no key; only used when LOCAL_MODEL=1
+    enabled_env: LOCAL_MODEL
+    models: { small: qwen2.5:7b, large: qwen2.5:7b }
+
+# Each agent's model tier and output budget. Inputs can be large; outputs stay small.
+agents:
+  router:   { tier: small, max_tokens: 300 }
+  planner:  { tier: large, max_tokens: 800 }
+  qa:       { tier: small, max_tokens: 500 }
+  reviewer: { tier: large, max_tokens: 500 }
+  extract_protocol_fields: { tier: small, max_tokens: 400 }
+
+# What counts as a provider refusing the request. On a refusal the gateway moves to the
+# next provider and stops using the refusing one for the rest of the session.
+refusal:
+  finish_reasons: [content_filter]
+  error_words: [policy, safety, moderation, content_filter, prohibited]
+  reply_phrases:
+    - "i can't help with"
+    - "i cannot help with"
+    - "i can't assist"
+    - "i cannot assist"
+    - "i'm unable to help"
+    - "i am unable to help"
+    - "i won't be able to help"
