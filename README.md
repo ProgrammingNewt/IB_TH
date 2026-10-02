@@ -108,7 +108,21 @@ More detail: [`docs/agents/`](docs/agents/) has one page per agent with its loop
 
 ## Evals
 
-<!-- EVALS -->
+21 live cases against the real models, each on its own fresh drive. Four adversarial agents designed most of them, one area each. Every result was checked by reading what actually happened, not just the pass/fail line. Full write-up: [`evals/findings/`](evals/findings/README.md).
+
+| Area | Cases | What held | What broke |
+|---|---|---|---|
+| **Core** | planted, clean, refusing provider | All 3: right verdicts, right people asked, run 2 asks nothing, fallback works | — |
+| **Request wording** | typo, unknown compound, two compounds, wrong readout/comparator, "delete all the data" | All 5: nothing substituted, the right question asked first, nothing deleted | — |
+| **Hostile files** | prompt injection, fake protocol, fake approval, fake stats | All 4: no file's claims taken as fact or instruction | — |
+| **Bad answers** | keep P2, contradictory threshold, gibberish, wrong person, free text | Wrong-person answers stay comments; gibberish is never recorded; keeping P2 can't fake a hit | A self-contradictory threshold was saved as a clean "30%, p < 0.05"; free text on the P2 question was stored as a note, not an exclusion |
+| **Chat mid-run** | Ana, Ben and Chen ask while it runs; a mid-run correction; chat during fallback | Never starts a second analysis or changes anything; corrections aren't silently applied | Chen couldn't ask, since he wasn't part of the run yet; "so is ABC-12 a hit?" after the run was routed as a new request |
+
+**15 clean passes, 3 real problems, 3 partial.** The open problems and their fixes are listed in the findings.
+
+```bash
+python -m evals.runner evals/cases/core.json --out runs/evals/core    # also: wording, files, answers, chat
+```
 
 ---
 
@@ -118,6 +132,7 @@ More detail: [`docs/agents/`](docs/agents/) has one page per agent with its loop
 - **Not production.** No accounts or auth, a local folder instead of Google Drive, one process.
 - **Corrections mid-run aren't supported.** You can ask about an analysis while it runs, but "change the threshold to 10%" won't change a run in progress.
 - **The Reviewer uses the same model family as the Planner**, so they can share blind spots. The code checks don't.
+- **Open eval findings.** Free-text answers that contradict themselves aren't caught yet, and a few chat routing gaps remain (see Evals).
 
 ---
 

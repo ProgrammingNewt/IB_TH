@@ -116,12 +116,12 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] "Clear everything" (first option under Start fresh): every drive back to zero, toy data rebuilt exactly as generated, uploads removed, job history cleared. The old "clear" also missed progress threads; fixed. 73 tests pass
 - [ ] Step 6 evals should include an adversarial request set (wrong names, wrong readout, vague, contradictory, injected instructions in files...) so each new failure mode becomes a permanent check
 
-## 6. Evals
-- [ ] `planted_batch_issue/`: asked the right people, correct stats, no causal wording, re-run plan with vehicle on the plate
-- [ ] `clean/`: no questions to owners, agrees with the notebook
-- [ ] Vague goal: only the threshold is asked, and before `run_stats`
-- [ ] Refusing provider: same result, and the switch shows in the trace
-- [ ] Scripted scientist answers so eval runs repeat exactly
+## 6. Evals: done
+- [x] Live eval runner (`evals/runner.py`): each case on its own fresh drive, scripted scientists, chat, planted files, refusing provider, run 2; records everything and checks expectations
+- [x] Core cases: planted (with run 2), clean, refusing provider. All pass
+- [x] Four adversarial agents, one area each (wording, hostile files, bad answers, chat): 18 more cases. Every result verified by hand
+- [x] Results: 15 clean passes, 3 real problems, 3 partial. Write-up in `evals/findings/README.md`; summary table in the README
+- [ ] Fix the open findings: contradictory free-text thresholds, free text on contradictions, anyone can ask about an analysis, a question after the run shouldn't start a new one
 
 ## 7. Packaging and write-up
 - [ ] `Dockerfile` + `docker-compose.yml`, tested with a clean build
