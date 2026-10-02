@@ -600,7 +600,7 @@ class Harness:
             self._save_run(run)
 
     def _waiting_for(self, qids: list[str]) -> str:
-        """'Ben Okafor on plate P2, Ana Ruiz on the threshold'."""
+        """'Scientist B on plate P2, Scientist A on the threshold'."""
         parts = []
         for qid in qids:
             q = self._load("questions", qid)

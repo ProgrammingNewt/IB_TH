@@ -18,15 +18,15 @@ from .scenarios import COMPOUND, Scenario
 rl_config.invariant = 1          # no creation timestamp or random id in the PDF
 
 PEOPLE = {
-    "A": {"name": "Ana Ruiz", "role": "biologist"},
-    "B": {"name": "Ben Okafor", "role": "screening scientist"},
-    "C": {"name": "Chen Li", "role": "data scientist"},
+    "A": {"name": "Scientist A", "role": "biologist"},
+    "B": {"name": "Scientist B", "role": "screening scientist"},
+    "C": {"name": "Scientist C", "role": "data scientist"},
 }
 FIXED_TIME = dt.datetime(2026, 9, 18, 9, 0, 0)
 
 PROTOCOL = [
     ("Protocol PRT-017: ABC-12 and senescence in IMR-90 fibroblasts", "title"),
-    ("Author: Ana Ruiz (biology). Version 1.2, 2 September 2026.", "body"),
+    ("Author: Scientist A (biology). Version 1.2, 2 September 2026.", "body"),
     ("1. Question", "h"),
     ("Does ABC-12 reduce senescence-associated beta-galactosidase (SA-beta-gal) signal in "
      "senescent IMR-90 fibroblasts compared with vehicle?", "body"),
@@ -91,7 +91,7 @@ def write_protocol_pdf(path: Path) -> None:
         story.append(Paragraph(text, style[kind]))
         if kind == "body":
             story.append(Spacer(1, 6))
-    doc = SimpleDocTemplate(str(path), pagesize=letter, title="PRT-017", author="Ana Ruiz")
+    doc = SimpleDocTemplate(str(path), pagesize=letter, title="PRT-017", author="Scientist A")
     doc.build(story)
 
 
@@ -99,7 +99,7 @@ def write_readings_xlsx(path: Path, readings: pd.DataFrame, metadata: pd.DataFra
     with pd.ExcelWriter(path, engine="openpyxl") as xw:
         readings.to_excel(xw, sheet_name="readings", index=False)
         metadata.to_excel(xw, sheet_name="run_metadata", index=False)
-        xw.book.properties.creator = "Ben Okafor"
+        xw.book.properties.creator = "Scientist B"
         xw.book.properties.created = FIXED_TIME
         xw.book.properties.modified = FIXED_TIME
 
@@ -111,7 +111,7 @@ def write_notebook(path: Path, style: str, claim: dict) -> None:
         else "Not a hit."
     nb = nbformat.v4.new_notebook()
     nb.cells = [
-        nbformat.v4.new_markdown_cell(f"# {COMPOUND} vs vehicle: SA-beta-gal\nChen Li, data science."),
+        nbformat.v4.new_markdown_cell(f"# {COMPOUND} vs vehicle: SA-beta-gal\nScientist C, data science."),
         nbformat.v4.new_code_cell(NOTEBOOK_LOAD),
         nbformat.v4.new_code_cell(analysis),
         nbformat.v4.new_markdown_cell(

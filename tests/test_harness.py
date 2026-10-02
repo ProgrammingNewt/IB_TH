@@ -123,7 +123,7 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
 
     findings = h.drive.path("findings/findings.md").read_text()
     assert "**not a hit**" in findings
-    assert "Exclude plate P2 from the analysis (confirmed by Ben Okafor" in findings
+    assert "Exclude plate P2 from the analysis (confirmed by Scientist B" in findings
     assert "threshold: drop of at least 30% with p < 0.05" in findings
     assert "pending_approval" in findings
     assert h.drive.path("findings/notes/analysis.ipynb.md").exists()
@@ -162,11 +162,11 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert steps[0] == "Got it. Working on: Is ABC-12 a hit?"
     assert steps[1] == "Understood: a new analysis of ABC-12."
     assert "Reading the protocol (raw/protocol.pdf)" in steps
-    assert "Waiting for answers: Ben Okafor on plate P2, Ana Ruiz on the threshold" in steps
+    assert "Waiting for answers: Scientist B on plate P2, Scientist A on the threshold" in steps
     # Ben answered first, so the thread still waits for Ana; only her answer resumes it.
-    assert "Ben Okafor answered. Still waiting for Ana Ruiz on the threshold." in steps
-    assert "Ana Ruiz answered. All answers are in, continuing." in steps
-    assert steps.index("Running the statistics") > steps.index("Ana Ruiz answered. All answers are in, continuing.")
+    assert "Scientist B answered. Still waiting for Scientist A on the threshold." in steps
+    assert "Scientist A answered. All answers are in, continuing." in steps
+    assert steps.index("Running the statistics") > steps.index("Scientist A answered. All answers are in, continuing.")
     milestones = [x["text"] for x in first["steps"] if x["milestone"]]
     assert "Reading the protocol (raw/protocol.pdf)" not in milestones
     assert milestones[-1] == "Done: not a hit. The findings are in the Findings tab."
@@ -174,7 +174,7 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert first["state"] == "done" and first["goal"] == "g-001"
     # Ben's upload started its own thread, which Ana sees because it's her goal.
     assert upload["by"] == "B" and upload["kind"] == "upload" and upload["state"] == "done"
-    assert upload["steps"][0]["text"].startswith("Ben Okafor uploaded raw/readings_rerun.xlsx")
+    assert upload["steps"][0]["text"].startswith("Scientist B uploaded raw/readings_rerun.xlsx")
     assert [t["id"] for t in h.threads("B")] == [upload["id"]]
     # The Reviewer saw the SOP, so it can check claims that cite it.
     review_call = next(c for c in client.calls if "Reviewer" in c["messages"][0]["content"])
@@ -671,7 +671,7 @@ def test_qa_gets_what_the_analysis_used_and_what_a_plan_is_for(setup):
     so_far = state["analysis_so_far"]
     assert so_far["plates_in_current_result"] == ["P1 (raw/readings.xlsx)"]
     assert so_far["excluded_by_the_team"][0]["plate"] == "P2"
-    assert so_far["excluded_by_the_team"][0]["decided_by"] == "Ben Okafor"
+    assert so_far["excluded_by_the_team"][0]["decided_by"] == "Scientist B"
     assert "treatment_hours was 48" in so_far["excluded_by_the_team"][0]["why"]
     purpose = state["plate_plans"][0]["purpose"]
     assert purpose.startswith("Re-does the work of P2")
@@ -680,7 +680,7 @@ def test_qa_gets_what_the_analysis_used_and_what_a_plan_is_for(setup):
     assert state["plate_plans"][0]["what_it_is"].startswith("the replacement plate")
     assert "kind" not in state["plate_plans"][0] and "plan" not in state["plate_plans"][0]
     assert "not a repeat of P1" in purpose and "will use P1 and the new plate; P2 stays excluded" in purpose
-    assert state["reader"] == {"name": "Ana Ruiz", "is_the_requester": True}
+    assert state["reader"] == {"name": "Scientist A", "is_the_requester": True}
 
 
 def test_qa_may_not_quote_internal_ids(setup):
@@ -745,7 +745,7 @@ def test_findings_formatting(setup):
                                                            "source": "derived/stats.json", "key": "drop"}]})
     md = h._render(goal)
     assert "| Drop | 2.4% (0.0238) |" in md
-    assert "- Exclude plate P2 from the analysis (confirmed by Ben Okafor)\n" in md + "\n"
+    assert "- Exclude plate P2 from the analysis (confirmed by Scientist B)\n" in md + "\n"
     assert "f-0" not in md and "awaiting" not in md
 
 

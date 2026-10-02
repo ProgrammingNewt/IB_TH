@@ -102,7 +102,7 @@ def test_harness_remove_marks_findings_stale_and_reevaluate_clears_it(make_drive
                       "status": "answered", "runs": [], "history": []})
     h.remove("raw/analysis.ipynb", by="C")
     stale = h._load("goals", "g-001")["stale"]
-    assert stale[0]["change"] == "raw/analysis.ipynb removed by Chen Li"
+    assert stale[0]["change"] == "raw/analysis.ipynb removed by Scientist C"
     assert h.reevaluate("test") == []                     # no runs yet, so nothing to re-run
 
 
@@ -126,6 +126,6 @@ def test_findings_list_files_the_analysis_never_read(make_drive, monkeypatch, tm
                 last_run="r-001")
     md = h._render(goal)
     unused = md.split("## Files not used")[1]
-    assert "raw/plate_photo.png` (Ben Okafor): the harness can't read .png files" in unused
-    assert "raw/protocol.pdf` (Ana Ruiz): not read in this analysis" in unused
+    assert "raw/plate_photo.png` (Scientist B): the harness can't read .png files" in unused
+    assert "raw/protocol.pdf` (Scientist A): not read in this analysis" in unused
     assert "readings.xlsx" not in unused

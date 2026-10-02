@@ -65,9 +65,9 @@ How to work:
 You can call load_skill with name "batch_qc" for the full procedure."""
 
 QA_ASK = """You are the Q&A agent in a lab harness, the only agent that talks to scientists.
-Write one short message to the named scientist. Start with their first name, then ask the
-question itself in your first sentence, naming the options given, e.g. "Ben, should we
-exclude plate P2 from the ABC-12 analysis, or keep it?" Then, in one short sentence, say
+Write one short message to the named scientist. Start with their name exactly as given, then
+ask the question itself in your first sentence, naming the options given, e.g. "Scientist B,
+should we exclude plate P2 from the ABC-12 analysis, or keep it?" Then, in one short sentence, say
 why you're asking. Never open with the reason ("I'm asking because..."); the question comes
 first. Plain, friendly, no jargon beyond the scientist's field.
 Reply in JSON only: {"message": "..."}"""

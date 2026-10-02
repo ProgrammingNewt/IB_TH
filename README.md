@@ -12,22 +12,22 @@ Three scientists share a drive:
 
 | Who | File | What it says |
 |---|---|---|
-| **Ana** (biologist) | `protocol.pdf` | "Does ABC-12 reduce the senescence marker vs vehicle? Treat for 72 h. Every plate has its own vehicle wells. Hit criteria: to be agreed." |
-| **Ben** (screening) | `readings.xlsx` | Plate P1 (72 h, vehicle + ABC-12). Plate P2 (**48 h, ABC-12 only, no vehicle**). |
-| **Chen** (data science) | `analysis.ipynb` | Pools both plates: "ABC-12 drops the marker 37%, p = 1e-05. **Hit.**" |
+| **Scientist A** (biologist) | `protocol.pdf` | "Does ABC-12 reduce the senescence marker vs vehicle? Treat for 72 h. Every plate has its own vehicle wells. Hit criteria: to be agreed." |
+| **Scientist B** (screening) | `readings.xlsx` | Plate P1 (72 h, vehicle + ABC-12). Plate P2 (**48 h, ABC-12 only, no vehicle**). |
+| **Scientist C** (data science) | `analysis.ipynb` | Pools both plates: "ABC-12 drops the marker 37%, p = 1e-05. **Hit.**" |
 
-Ana asks: **"Is ABC-12 a hit?"**
+Scientist A asks: **"Is ABC-12 a hit?"**
 
 The catch sits *between* their files. P2 ran too short and has no vehicle wells, so pooling it fakes a drop. Using P1 alone, the drop is **2.4% (p = 0.63): not a hit.** No single scientist can see this from their own file.
 
 What the harness does:
 
-1. Reads all three files, notices "hit criteria: to be agreed", and asks Ana what counts as a hit.
-2. Spots that P2 breaks the protocol, and asks **Ben**, because it's his data, whether to exclude it.
+1. Reads all three files, notices "hit criteria: to be agreed", and asks Scientist A what counts as a hit.
+2. Spots that P2 breaks the protocol, and asks **Scientist B**, because it's their data, whether to exclude it.
 3. Once both answer, analyses P1 against its own vehicle wells: not a hit.
-4. Drafts a replacement plate (72 h, vehicle on the plate) and asks Ana to approve it.
-5. Writes the findings, and leaves Chen a note explaining why the notebook got 37%.
-6. When Ben uploads the replacement plate, it re-runs on its own, asks nobody anything again, and updates the findings.
+4. Drafts a replacement plate (72 h, vehicle on the plate) and asks Scientist A to approve it.
+5. Writes the findings, and leaves Scientist C a note explaining why the notebook got 37%.
+6. When Scientist B uploads the replacement plate, it re-runs on its own, asks nobody anything again, and updates the findings.
 
 ---
 
@@ -41,12 +41,12 @@ python -m harness.gateway       # check the providers answer
 streamlit run ui/app.py         # http://localhost:8501
 ```
 
-Open one tab per scientist: `?as=A` (Ana), `?as=B` (Ben), `?as=C` (Chen).
+Open one tab per scientist: `?as=A`, `?as=B`, `?as=C`.
 
-- **Ana:** ask "Is ABC-12 a hit?" in the chat.
-- **Ben:** answer the plate P2 question in ❓ My questions.
-- **Ana:** pick a threshold, then approve the plate plan. Read the Findings tab.
-- **Ben:** upload the demo re-run file (Drive tab). Run 2 updates the findings.
+- **Scientist A:** ask "Is ABC-12 a hit?" in the chat.
+- **Scientist B:** answer the plate P2 question in ❓ My questions.
+- **Scientist A:** pick a threshold, then approve the plate plan. Read the Findings tab.
+- **Scientist B:** upload the demo re-run file (Drive tab). Run 2 updates the findings.
 - Anyone can ask about the analysis while it runs, e.g. "is the analysis only using P1?"
 
 **Start fresh → Clear everything** in the sidebar resets every drive. Restart the server after changing anything in `harness/`.
@@ -114,9 +114,9 @@ More detail: [`docs/agents/`](docs/agents/) has one page per agent with its loop
 |---|---|---|---|
 | **Core** | planted, clean, refusing provider | All 3: right verdicts, right people asked, run 2 asks nothing, fallback works | — |
 | **Request wording** | typo, unknown compound, two compounds, wrong readout/comparator, "delete all the data" | All 5: nothing substituted, the right question asked first, nothing deleted | — |
-| **Hostile files** | prompt injection, fake protocol, fake approval, fake stats | All 4: no file's claims taken as fact or instruction | Three of them were ignored silently: nobody was told a file contradicts the result, including a fake approval signed "Ben" |
+| **Hostile files** | prompt injection, fake protocol, fake approval, fake stats | All 4: no file's claims taken as fact or instruction | Three of them were ignored silently: nobody was told a file contradicts the result, including a fake approval signed "Scientist B" |
 | **Bad answers** | keep P2, contradictory threshold, gibberish, wrong person, free text | Wrong-person answers stay comments; gibberish is never recorded; keeping P2 can't fake a hit | A self-contradictory threshold was saved as a clean "30%, p < 0.05"; free text on the P2 question was stored as a note, not an exclusion |
-| **Chat mid-run** | Ana, Ben and Chen ask while it runs; a mid-run correction; chat during fallback | Never starts a second analysis or changes anything; corrections aren't silently applied | Chen couldn't ask, since he wasn't part of the run yet; "so is ABC-12 a hit?" after the run was routed as a new request |
+| **Chat mid-run** | Ana, Ben and Chen ask while it runs; a mid-run correction; chat during fallback | Never starts a second analysis or changes anything; corrections aren't silently applied | Scientist C couldn't ask, not being part of the run yet; "so is ABC-12 a hit?" after the run was routed as a new request |
 
 **15 clean passes, 3 real problems, 3 partial.** The open problems and their fixes are listed in the findings.
 
