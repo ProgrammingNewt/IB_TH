@@ -21,13 +21,19 @@ providers:
     enabled_env: LOCAL_MODEL
     models: { small: qwen2.5:7b, large: qwen2.5:7b }
 
-# Each agent's model tier and output budget. Inputs can be large; outputs stay small.
+# Each agent's model tier. No per-call output cap is sent unless an agent sets
+# max_tokens, so each provider uses its own maximum reply length.
 agents:
-  router:   { tier: small, max_tokens: 300 }
-  planner:  { tier: large, max_tokens: 800 }
-  qa:       { tier: small, max_tokens: 500 }
-  reviewer: { tier: large, max_tokens: 500 }
-  extract_protocol_fields: { tier: small, max_tokens: 400 }
+  router:   { tier: small }
+  planner:  { tier: large }
+  qa:       { tier: small }
+  reviewer: { tier: large }
+  extract_protocol_fields: { tier: small }
+
+limits:
+  run_token_budget: 1000000           # prompt + completion tokens across a whole run
+  retries: 5                          # on timeouts, connection errors, 429 and 5xx, before falling back
+  backoff_seconds: [1, 2, 4, 8, 16]   # wait before each retry
 
 # What counts as a provider refusing the request. On a refusal the gateway moves to the
 # next provider and stops using the refusing one for the rest of the session.

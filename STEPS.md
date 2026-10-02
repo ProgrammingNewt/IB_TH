@@ -43,13 +43,15 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 ## 3. LLM gateway
 - [x] One OpenAI-compatible client (`harness/gateway/gateway.py`), configured by `config.yaml`
 - [x] Providers in order: `model_provider_1` (DeepSeek) → `model_provider_2` (Cerebras) → `local_model` (Ollama, only when `LOCAL_MODEL=1`). A provider without a key is skipped
-- [x] Each agent has a model tier (small or large) and an output budget
-- [x] On a refusal (content-filter stop, policy error, or a refusal reply) it moves to the next provider and benches the refusing one for the session. Timeouts and errors also fall back but don't bench
+- [x] Each agent has a model tier (small or large). No per-call output cap is sent, so each provider uses its own maximum
+- [x] Run token budget of 1,000,000 (prompt + completion across the whole run). Past it, the gateway stops and the loop reports what it has
+- [x] On a refusal (content-filter stop, policy error, or a refusal reply) it moves to the next provider at once and benches the refusing one for the session
+- [x] Timeouts, connection errors, rate limits (429) and server errors (5xx) are retried 5 times on the same provider, waiting 1, 2, 4, 8, 16 s, before falling back. They don't bench the provider. A bad key (401) falls back without retrying
 - [x] Fake providers for tests and the demo (`harness/gateway/fakes.py`): scripted, refusing (3 styles), failing
 - [x] Every call is logged (agent, provider, model, tokens, latency, outcome) through a JSONL tracer
 - [x] `python -m harness.gateway` checks each provider on its own and reports ok, skipped, refused or error
-- [x] Tests: `tests/test_gateway.py` (10)
-- [ ] Add keys to `.env` (you do this; never paste keys in chat), then run `python -m harness.gateway`
+- [x] Tests: `tests/test_gateway.py` (15)
+- [ ] Add keys: `cp .env.example .env`, fill in `DEEPSEEK_API_KEY` and `CEREBRAS_API_KEY` (you do this; never paste keys in chat), then run `.venv/bin/python -m harness.gateway`
 - [ ] Confirm the model names in `config.yaml` against each provider's current list, and that the chosen models support tool calls
 
 ## 4. Agents and the loop

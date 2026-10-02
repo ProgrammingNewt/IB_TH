@@ -67,7 +67,29 @@ class PolicyError(Exception):
 
 
 class FailingClient(_Client):
-    """Fails like a network problem: not a refusal, just unavailable."""
+    """Fails like a network problem: not a refusal, just unavailable.
+
+    With `then` set, it fails `times` times and then returns that reply."""
+
+    def __init__(self, times: int | None = None, then: str = "recovered"):
+        super().__init__()
+        self.times, self.then = times, then
 
     def respond(self, kwargs):
-        raise TimeoutError("request timed out")
+        if self.times is None or len(self.calls) <= self.times:
+            raise TimeoutError("request timed out")
+        return _response(self.then)
+
+
+class AuthError(Exception):
+    status_code = 401
+
+    def __str__(self):
+        return "Error code: 401 - invalid api key"
+
+
+class BadKeyClient(_Client):
+    """A wrong key: not worth retrying, and not a refusal."""
+
+    def respond(self, kwargs):
+        raise AuthError()

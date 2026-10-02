@@ -2,9 +2,11 @@
 
 Providers are tried in the order `config.yaml` lists them. A provider is skipped when its
 key isn't set. When a provider refuses (a content-filter stop, a policy error, or a reply
-that is a refusal), the gateway moves to the next one and stops using the refusing
-provider for the rest of the session. Errors such as timeouts also move to the next
-provider, but don't bench the one that failed. Every attempt is written to the trace.
+that is a refusal), the gateway moves to the next one at once and stops using the refusing
+provider for the rest of the session. Timeouts, connection errors, rate limits and server
+errors are retried on the same provider (5 times by default, with backoff) before moving
+on, and don't bench it. Every attempt is written to the trace, and the whole run shares
+one token budget.
 """
 from __future__ import annotations
 
@@ -19,6 +21,10 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
+
+
+class TokenBudgetExceeded(Exception):
+    """The run has used its token budget. The loop should stop and report."""
 
 
 class GatewayError(Exception):
@@ -64,6 +70,19 @@ def load_config(path: Path | None = None) -> dict:
     return yaml.safe_load((path or ROOT / "config.yaml").read_text())
 
 
+RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+
+def is_retryable(exc: Exception) -> bool:
+    """Timeouts, dropped connections, rate limits and server errors: worth another try."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    name = type(exc).__name__
+    if "Timeout" in name or "Connection" in name:
+        return True
+    return getattr(exc, "status_code", None) in RETRYABLE_STATUS
+
+
 def _openai_client(provider: Provider):
     from openai import OpenAI
     return OpenAI(base_url=provider.base_url, api_key=provider.api_key(), timeout=60,
@@ -73,11 +92,18 @@ def _openai_client(provider: Provider):
 class Gateway:
     def __init__(self, config: dict | None = None,
                  client_factory: Callable[[Provider], Any] = _openai_client,
-                 tracer: Callable[[dict], None] | None = None):
+                 tracer: Callable[[dict], None] | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
         cfg = config or load_config()
         self.providers = [Provider(**p) for p in cfg["providers"]]
         self.agents = cfg["agents"]
         self.refusal = cfg["refusal"]
+        limits = cfg.get("limits", {})
+        self.token_budget = limits.get("run_token_budget", 1_000_000)
+        self.retries = limits.get("retries", 5)
+        self.backoff = limits.get("backoff_seconds", [1, 2, 4, 8, 16])
+        self.sleep = sleep
+        self.tokens_used = 0
         self.client_factory = client_factory
         self.tracer = tracer or (lambda event: None)
         self.benched: dict[str, str] = {}          # provider name -> why it was benched
@@ -105,9 +131,27 @@ class Gateway:
 
     # ---- the call ---------------------------------------------------------------
 
+    def _create_with_retries(self, p: Provider, kwargs: dict, event: dict):
+        """Call one provider, retrying errors that are worth retrying. Raises the last error."""
+        for attempt in range(self.retries + 1):
+            started = time.perf_counter()
+            try:
+                return self._client(p).chat.completions.create(**kwargs), started
+            except Exception as exc:                                 # noqa: BLE001
+                if self._is_refusal_error(exc) or not is_retryable(exc) or attempt == self.retries:
+                    raise
+                wait = self.backoff[min(attempt, len(self.backoff) - 1)]
+                self.tracer(event | {"outcome": "retry", "attempt": attempt + 1,
+                                     "reason": str(exc)[:200], "wait_s": wait})
+                self.sleep(wait)
+        raise AssertionError("unreachable")
+
     def complete(self, agent: str, messages: list[dict], tools: list[dict] | None = None,
                  json_mode: bool = False) -> Completion:
         """Call the model configured for `agent`, falling back through the providers."""
+        if self.tokens_used >= self.token_budget:
+            raise TokenBudgetExceeded(
+                f"run used {self.tokens_used:,} of its {self.token_budget:,} token budget")
         spec = self.agents[agent]
         attempts: list[dict] = []
         for p in self.providers:
@@ -121,17 +165,18 @@ class Gateway:
                 continue
 
             model = p.models[spec["tier"]]
-            kwargs: dict[str, Any] = {"model": model, "messages": messages,
-                                      "max_tokens": spec["max_tokens"], "temperature": 0}
+            kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0}
+            if spec.get("max_tokens"):
+                kwargs["max_tokens"] = spec["max_tokens"]
             if tools:
                 kwargs["tools"] = tools
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
 
-            started = time.perf_counter()
             event = {"agent": agent, "provider": p.name, "label": p.label, "model": model}
+            started = time.perf_counter()
             try:
-                resp = self._client(p).chat.completions.create(**kwargs)
+                resp, started = self._create_with_retries(p, kwargs, event)
             except Exception as exc:                                 # noqa: BLE001
                 refused = self._is_refusal_error(exc)
                 outcome = "refused" if refused else "error"
@@ -146,8 +191,9 @@ class Gateway:
             content = choice.message.content or ""
             tool_calls = [{"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                           for tc in (choice.message.tool_calls or [])]
-            usage = {"prompt_tokens": getattr(resp.usage, "prompt_tokens", 0),
-                     "completion_tokens": getattr(resp.usage, "completion_tokens", 0)}
+            usage = {"prompt_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
+                     "completion_tokens": getattr(resp.usage, "completion_tokens", 0) or 0}
+            self.tokens_used += usage["prompt_tokens"] + usage["completion_tokens"]
             latency = round((time.perf_counter() - started) * 1000)
 
             if self._is_refusal_reply(choice.finish_reason, content, tool_calls):
@@ -161,6 +207,7 @@ class Gateway:
             attempts.append({"provider": p.name, "outcome": "ok"})
             self.tracer(event | {"outcome": "ok", "finish_reason": choice.finish_reason,
                                  "usage": usage, "latency_ms": latency,
+                                 "tokens_used_in_run": self.tokens_used,
                                  "fell_back": len([a for a in attempts if a["outcome"] != "skipped"]) > 1})
             return Completion(content, tool_calls, choice.finish_reason, p.name, model, usage,
                               attempts)

@@ -2,8 +2,9 @@ import json
 
 import pytest
 
-from harness.gateway.fakes import FailingClient, RefusingClient, ScriptedClient
-from harness.gateway.gateway import Gateway, GatewayError, jsonl_tracer, load_config
+from harness.gateway.fakes import BadKeyClient, FailingClient, RefusingClient, ScriptedClient
+from harness.gateway.gateway import (Gateway, GatewayError, TokenBudgetExceeded, jsonl_tracer,
+                                     load_config)
 
 MSG = [{"role": "user", "content": "Is ABC-12 a hit?"}]
 
@@ -15,16 +16,19 @@ def keys(monkeypatch):
     monkeypatch.delenv("LOCAL_MODEL", raising=False)
 
 
-def gateway(clients: dict, events: list | None = None) -> Gateway:
-    return Gateway(load_config(), client_factory=lambda p: clients[p.name],
-                   tracer=(events.append if events is not None else None))
+def gateway(clients: dict, events: list | None = None, waits: list | None = None,
+            config: dict | None = None) -> Gateway:
+    return Gateway(config or load_config(), client_factory=lambda p: clients[p.name],
+                   tracer=(events.append if events is not None else None),
+                   sleep=(waits.append if waits is not None else lambda s: None))
 
 
 def test_first_provider_answers(keys):
     one = ScriptedClient(["hello"])
     c = gateway({"model_provider_1": one, "model_provider_2": ScriptedClient([])}).complete("router", MSG)
     assert (c.provider, c.model, c.content) == ("model_provider_1", "deepseek-flash", "hello")
-    assert one.calls[0]["max_tokens"] == 300 and one.calls[0]["temperature"] == 0
+    assert one.calls[0]["temperature"] == 0
+    assert "max_tokens" not in one.calls[0]       # each provider uses its own maximum
 
 
 @pytest.mark.parametrize("style", ["reply", "content_filter", "error"])
@@ -47,13 +51,62 @@ def test_refusal_falls_back_and_benches_the_provider(keys, style):
     assert "model_provider_1" in gw.benched
 
 
-def test_error_falls_back_without_benching(keys):
-    flaky = FailingClient()
-    gw = gateway({"model_provider_1": flaky, "model_provider_2": ScriptedClient(["a", "b"])})
+def test_timeouts_retry_5_times_then_fall_back_without_benching(keys):
+    down = FailingClient()
+    waits = []
+    gw = gateway({"model_provider_1": down, "model_provider_2": ScriptedClient(["a", "b"])},
+                 waits=waits)
     assert gw.complete("router", MSG).provider == "model_provider_2"
+    assert len(down.calls) == 6                   # the first try plus 5 retries
+    assert waits == [1, 2, 4, 8, 16]
     gw.complete("router", MSG)
-    assert len(flaky.calls) == 2                  # timeouts don't bench a provider
+    assert len(down.calls) == 12                  # a timeout doesn't bench the provider
     assert gw.benched == {}
+
+
+def test_a_timeout_that_recovers_stays_on_the_same_provider(keys):
+    events, waits = [], []
+    flaky = FailingClient(times=2, then="made it")
+    c = gateway({"model_provider_1": flaky, "model_provider_2": ScriptedClient([])},
+                events, waits).complete("planner", MSG)
+    assert (c.provider, c.content) == ("model_provider_1", "made it")
+    assert waits == [1, 2]
+    assert [e["outcome"] for e in events] == ["retry", "retry", "ok"]
+
+
+def test_bad_key_is_not_retried(keys):
+    bad = BadKeyClient()
+    waits = []
+    gw = gateway({"model_provider_1": bad, "model_provider_2": ScriptedClient(["x"])},
+                 waits=waits)
+    assert gw.complete("router", MSG).provider == "model_provider_2"
+    assert len(bad.calls) == 1 and waits == []
+    assert gw.benched == {}                       # a bad key isn't a refusal
+
+
+def test_refusals_are_not_retried(keys):
+    refusing = RefusingClient("error")
+    waits = []
+    gateway({"model_provider_1": refusing, "model_provider_2": ScriptedClient(["x"])},
+            waits=waits).complete("router", MSG)
+    assert len(refusing.calls) == 1 and waits == []
+
+
+def test_run_token_budget(keys):
+    cfg = load_config()
+    cfg["limits"]["run_token_budget"] = 250       # each fake reply uses 120 tokens
+    gw = gateway({"model_provider_1": ScriptedClient(["a", "b", "c"]),
+                  "model_provider_2": ScriptedClient([])}, config=cfg)
+    gw.complete("router", MSG)
+    gw.complete("router", MSG)
+    assert gw.tokens_used == 240
+    gw.complete("router", MSG)                    # 240 < 250, so this call still goes out
+    with pytest.raises(TokenBudgetExceeded):
+        gw.complete("router", MSG)
+
+
+def test_default_budget_is_one_million():
+    assert load_config()["limits"]["run_token_budget"] == 1_000_000
 
 
 def test_missing_key_is_skipped(monkeypatch):
