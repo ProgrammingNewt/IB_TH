@@ -6,11 +6,11 @@ A collaborative, science-focused agent harness. Several scientists and four LLM 
 
 ## Status
 
-- [ ] Toy data generator with checks on the planted results
-- [ ] Drive, manifest, tools, guardrails
-- [ ] LLM gateway with provider fallback
-- [ ] Router, Planner, Q&A and Reviewer agents
-- [ ] Streamlit UI, one tab per scientist
+- [x] Toy data generator with checks on the planted results
+- [x] Drive, manifest, tools, guardrails
+- [x] LLM gateway with provider fallback
+- [x] Router, Planner, Q&A and Reviewer agents
+- [x] Streamlit UI, one tab per scientist
 - [ ] Evals
 - [ ] Docker
 
