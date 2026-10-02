@@ -1,0 +1,13 @@
+# Secrets
+.env
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Generated drives and run output (rebuilt by `python -m datagen`)
+drives/
+runs/
