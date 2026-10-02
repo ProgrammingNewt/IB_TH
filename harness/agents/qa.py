@@ -22,6 +22,35 @@ def _message(out: dict) -> str | None:
     return None if isinstance(m, str) and m.strip() else "Missing a non-empty \"message\"."
 
 
+def _n(text: str) -> str:
+    return "".join(ch for ch in str(text).lower() if ch.isalnum())
+
+
+def _with_renames(check: Callable[[dict], str | None], renamed: dict[str, str]):
+    def combined(out: dict) -> str | None:
+        problem = check(out)
+        if problem:
+            return problem
+        text = _n(" ".join(str(v) for v in out.values() if isinstance(v, (str, list))))
+        for old, new in renamed.items():
+            if _n(old) in text:
+                return f"Call it {new}, not {old!r}: the requester confirmed {new}."
+        return None
+    return combined
+
+
+def _apply_renames(fallback: dict, renamed: dict[str, str]) -> dict:
+    import re
+    out = dict(fallback)
+    for key, value in out.items():
+        if isinstance(value, str):
+            for old, new in renamed.items():
+                pattern = r"[\s\-_]*".join(re.escape(ch) for ch in _n(old))
+                value = re.sub(pattern, new, value, flags=re.IGNORECASE)
+            out[key] = value
+    return out
+
+
 def _first_sentence(message: str) -> str:
     """The first sentence, ignoring a greeting such as "Hi Ana," or "Ben —"."""
     import re
@@ -106,12 +135,24 @@ class QA:
         self.gw, self.max_attempts = gateway, max_attempts
 
     def run(self, task: str, payload: dict, fallback: dict,
-            check: Callable[[dict], str | None] | None = None) -> dict:
-        """One task, with its own check. Returns `fallback` if the model can't do it."""
+            check: Callable[[dict], str | None] | None = None,
+            renamed: dict[str, str] | None = None) -> dict:
+        """One task, with its own check. Returns `fallback` if the model can't do it.
+
+        `renamed` maps terms the requester wrote to what they confirmed ("abv 12" -> ABC-12).
+        A message that still uses an old term is sent back, and the fallback has it replaced."""
         system, default_check = TASKS.get(task, (None, None))
         if task == "labels":
             system = prompts.QA_LABELS
         check = check or default_check
+        renamed = {old: new for old, new in (renamed or {}).items() if _n(old)}
+        if renamed:
+            system += ("\nRefer to things by their confirmed names: " +
+                       "; ".join(f"{new} (the request wrote {old!r})" for old, new in renamed.items()) +
+                       ". Never use the request's original wording for them.")
+            payload = {**payload, "confirmed_names": list(renamed.values())}
+            check = _with_renames(check, renamed)
+            fallback = _apply_renames(fallback, renamed)
         messages = [{"role": "system", "content": system}, as_user(payload)]
         for _ in range(self.max_attempts):
             try:
@@ -132,7 +173,7 @@ class QA:
     # Named entry points, so callers read clearly.
 
     def ask(self, person: dict, question: str, context: dict, options: list[str] = (),
-            must_mention: list[str] = ()) -> str:
+            must_mention: list[str] = (), renamed: dict[str, str] | None = None) -> str:
         """A question that ends by naming the decision and its options.
 
         `must_mention` are words the message has to contain (e.g. "exclude", "keep"); a
@@ -153,19 +194,23 @@ class QA:
         fallback = question + (f" Options: {'; '.join(options)}." if options else "")
         return self.run("ask", {"to": person, "question": question, "options": list(options),
                                 "context": context},
-                        {"message": fallback}, check=check)["message"].strip()
+                        {"message": fallback}, check=check, renamed=renamed)["message"].strip()
 
-    def report(self, person: dict, findings_md: str) -> str:
+    def report(self, person: dict, findings_md: str, renamed: dict[str, str] | None = None) -> str:
         return self.run("report", {"to": person, "findings": findings_md}, {"message":
-                        "The analysis is finished. The findings are in findings/findings.md."})["message"].strip()
+                        "The analysis is finished. The findings are in findings/findings.md."},
+                        renamed=renamed)["message"].strip()
 
-    def copy(self, person: dict, asked: dict, question: str) -> str:
+    def copy(self, person: dict, asked: dict, question: str,
+             renamed: dict[str, str] | None = None) -> str:
         return self.run("copy", {"to": person, "question_sent_to": asked, "question": question},
-                        {"message": f"{asked['name']} was asked: {question}"})["message"].strip()
+                        {"message": f"{asked['name']} was asked: {question}"},
+                        renamed=renamed)["message"].strip()
 
-    def note(self, person: dict, file: str, note: str) -> str:
+    def note(self, person: dict, file: str, note: str, renamed: dict[str, str] | None = None) -> str:
         return self.run("note", {"to": person, "file": file, "note": note},
-                        {"message": f"There's a note on {file}: {note}"})["message"].strip()
+                        {"message": f"There's a note on {file}: {note}"},
+                        renamed=renamed)["message"].strip()
 
     def labels(self, person: dict, question: str, values: list[dict],
                fallback: list[str]) -> list[str]:

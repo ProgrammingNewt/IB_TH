@@ -508,3 +508,52 @@ def test_an_error_inside_a_run_fails_it_cleanly(setup, monkeypatch):
     assert t["state"] == "failed" and "internal error (AttributeError: boom)" in t["steps"][-1]["text"]
     assert h._load("runs", out["run"])["status"] == "failed"
     assert h.inbox("A")[-1]["kind"] == "notice"
+
+
+def _confirmed_goal(h, typed="abv 12"):
+    goal = {"id": "g-001", "requester": "A", "question": f"is {typed} a hit?",
+            "slots": {"compound": "ABC-12", "comparator": "vehicle", "readout": "SA-beta-gal"},
+            "asked_slots": {"compound": typed}, "confirmed_slots": ["compound"], "ungrounded": {},
+            "status": "open", "runs": [], "history": []}
+    h._save("goals", goal)
+    return goal, {"id": "r-001", "goal_id": "g-001", "progress_id": None}
+
+
+@pytest.mark.parametrize("typed", ["abv 12", "acb 12", "ABC 21"])
+def test_messages_use_the_confirmed_name_not_the_typo(setup, typed):
+    h, client, _, _ = setup
+    goal, run = _confirmed_goal(h, typed)
+    client.replies += [say(message=f"Ana, do you approve this plan? We need to know if {typed.upper()} is a hit."),
+                       say(message="Ana, do you approve this plan? We need to know if ABC-12 is a hit.")]
+    q = h._new_question(run, goal, to="A", cc=[], about="approval:findings/plans/x.csv",
+                        text="Approve this plan?", choices=[{"key": "approve", "label": "Approve"},
+                                                            {"key": "reject", "label": "Reject"}])
+    assert q["message"] == "Ana, do you approve this plan? We need to know if ABC-12 is a hit."
+    retry = client.calls[1]["messages"][-1]["content"]
+    assert f"Call it ABC-12, not '{typed}'" in retry
+
+
+def test_the_question_about_a_term_may_quote_what_was_typed(setup):
+    h, client, _, _ = setup
+    goal, run = _confirmed_goal(h)
+    msg = "Ana, did you mean ABC-12 when you wrote 'abv 12'? The files only have ABC-12."
+    client.replies += [say(message=msg)]
+    q = h._new_question(run, goal, to="A", cc=[], about="slot:compound", text="Which compound?",
+                        choices=[{"key": "c1", "label": "ABC-12", "value": "ABC-12"}])
+    assert q["message"] == msg
+
+
+def test_the_fallback_has_the_typo_replaced(setup):
+    from harness.agents.qa import _apply_renames
+    out = _apply_renames({"message": "Approve the plan for ABV-12? We're checking abv 12."}, {"abv 12": "ABC-12"})
+    assert out["message"] == "Approve the plan for ABC-12? We're checking ABC-12."
+
+
+def test_findings_title_uses_the_confirmed_terms(setup):
+    h, _, _, _ = setup
+    goal, _ = _confirmed_goal(h)
+    goal.update(last_draft={"verdict": "not a hit", "summary": "s", "numbers": [], "next_step": "n"},
+                last_run="r-001")
+    md = h._render(goal)
+    assert md.startswith("# Findings: ABC-12 vs vehicle · readout: SA-beta-gal")
+    assert 'Asked as: "is abv 12 a hit?"' in md

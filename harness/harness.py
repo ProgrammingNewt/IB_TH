@@ -548,15 +548,20 @@ class Harness:
         kind = about.split(":")[0]
         must = {"contradiction": ["exclude", "keep"], "approval": ["approve"]}.get(kind, [])
         options = [c["label"] for c in choices if c["key"] != "other"]
-        message = self.qa.ask(self._person(to), text, {"goal": goal["question"], "about": about},
-                              options=options, must_mention=must)
+        slot = about.partition(":")[2] if kind == "slot" else None
+        message = self.qa.ask(self._person(to), text,
+                              {"request_as_written": goal["question"], "about": about,
+                               "confirmed_terms": {k: v for k, v in goal["slots"].items()
+                                                   if k in TERM_SLOTS and k not in goal.get("ungrounded", {})}},
+                              options=options, must_mention=must, renamed=_renamed(goal, slot))
         q = {"id": self._new_id("questions", "q"), "run_id": run["id"], "goal_id": goal["id"],
              "to": to, "cc": cc, "about": about, "text": text, "message": message,
              "choices": choices, "status": "open", "asked": _now()}
         self._save("questions", q)
         self._notify(to, "question", message, q["id"])
         for person in cc:
-            self._notify(person, "fyi", self.qa.copy(self._person(person), self._person(to), text),
+            self._notify(person, "fyi", self.qa.copy(self._person(person), self._person(to), text,
+                                                     renamed=_renamed(goal, about.partition(":")[2])),
                          q["id"])
         return q
 
@@ -663,9 +668,10 @@ class Harness:
                 with p.open("a") as fh:
                     fh.write(f"## {run['id']}, for {self._person(owner)['name']}\n\n{n.get('note', '')}\n\n")
                 self._notify(owner, "note", self.qa.note(self._person(owner), str(n.get("file")),
-                                                         n.get("note", "")), rel)
+                                                         n.get("note", ""), renamed=_renamed(goal)), rel)
         self._notify(goal["requester"], "report",
-                     self.qa.report(self._person(goal["requester"]), md), "findings/findings.md")
+                     self.qa.report(self._person(goal["requester"]), md, renamed=_renamed(goal)),
+                     "findings/findings.md")
         status = "done" if review["pass"] else "done_with_problems"
         self._say(run.get("progress_id"), "done", state="done", verdict=draft.get("verdict", "finished"))
         return self._finish(run, status, "; ".join(unresolved))
@@ -682,7 +688,10 @@ class Harness:
         people = self.drive.people
         name = lambda pid: people.get(pid, {}).get("name", pid)       # noqa: E731
         th = goal["slots"].get("threshold")
-        lines = [f"# Findings: {goal['question']}", "",
+        sl = goal["slots"]
+        title = " vs ".join(x for x in (sl.get("compound"), sl.get("comparator")) if x) or goal["question"]
+        lines = [f"# Findings: {title}" + (f" · readout: {sl['readout']}" if sl.get("readout") else ""), "",
+                 f"Asked as: \"{goal['question']}\"", "",
                  f"Requested by {name(goal['requester'])} · goal {goal['id']} · run {goal['last_run']} · "
                  f"{dt.date.today().isoformat()}", "",
                  "## Verdict", "", f"**{d['verdict']}**" +
@@ -733,6 +742,18 @@ class Harness:
 
 
 TERM_SLOTS = ("compound", "readout", "comparator")
+
+
+def _renamed(goal: dict, except_slot: str | None = None) -> dict[str, str]:
+    """Terms the requester wrote that now have a different confirmed name, old -> new.
+    A question about that very term may quote it, so it can be left out."""
+    out = {}
+    for slot, asked in (goal.get("asked_slots") or {}).items():
+        now = (goal.get("slots") or {}).get(slot)
+        if slot != except_slot and isinstance(now, str) and slot not in (goal.get("ungrounded") or {}) \
+                and _norm(asked) != _norm(now):
+            out[asked] = now
+    return out
 
 
 def _norm(name: str) -> str:
