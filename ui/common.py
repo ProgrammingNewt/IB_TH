@@ -88,6 +88,17 @@ def reset_drive(drive_name: str) -> str:
     return error
 
 
+def last_drive() -> str | None:
+    """The drive someone used last, so every new tab opens on the same one."""
+    p = WORKSPACE / ".last_drive"
+    return p.read_text().strip() if p.exists() else None
+
+
+def remember_drive(name: str) -> None:
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    (WORKSPACE / ".last_drive").write_text(name)
+
+
 def ensure_default_drives() -> None:
     if not drives():
         for scenario in SCENARIOS:

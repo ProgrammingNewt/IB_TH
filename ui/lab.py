@@ -21,9 +21,14 @@ qp = st.query_params
 # ---- sidebar: drive, who you are, providers, job status -----------------------------
 
 names = c.drives()
-drive_name = st.sidebar.selectbox("Drive", names,
-                                  index=names.index(qp["drive"]) if qp.get("drive") in names else 0)
+wanted = qp.get("drive") if qp.get("drive") in names else c.last_drive()
+default = names.index(wanted) if wanted in names else (
+    names.index("planted_batch_issue") if "planted_batch_issue" in names else 0)
+drive_name = st.sidebar.selectbox("Drive", names, index=default,
+                                  help="Every scientist's tab must be on the same drive to work together.")
 qp["drive"] = drive_name
+if drive_name != c.last_drive():
+    c.remember_drive(drive_name)
 drive = Drive(c.WORKSPACE / drive_name)
 people = drive.people
 ids = list(people)
@@ -99,6 +104,26 @@ with st.sidebar:
     job_status()
 
 
+@st.fragment(run_every=2)
+def waiting_for_me():
+    """A live notice of questions waiting for this person, whatever any job is doing."""
+    hh = c.harness_for(drive_name)
+    mine = hh.questions(person=me, status="open")
+    if mine:
+        goals = {g["id"]: g for g in hh.goals()}
+        asked_by = {people.get(goals.get(q["goal_id"], {}).get("requester"), {}).get("name", "")
+                    for q in mine}
+        st.info(f"❓ **You have {len(mine)} question{'s' if len(mine) > 1 else ''} waiting** "
+                f"(from {', '.join(sorted(n for n in asked_by if n))}'s request). "
+                "Answer in the ❓ My questions tab.")
+    known = st.session_state.setdefault("known_questions", {q["id"] for q in mine})
+    if {q["id"] for q in mine} - known:                 # something new arrived: refresh the tabs
+        st.session_state.known_questions = {q["id"] for q in mine}
+        st.toast("❓ New question for you")
+        st.rerun(scope="app")
+    st.session_state.known_questions = {q["id"] for q in mine}
+
+
 def submit(label: str, fn) -> None:
     """Run `fn(harness, person)` in the background, bound to who clicked and which drive."""
     d, who, r = drive_name, me, refuse
@@ -114,6 +139,7 @@ h = c.harness_for(drive_name, refuse)          # reads only; jobs build their ow
 person = people[me]
 
 st.title(f"{person['name']}")
+waiting_for_me()
 st.caption(f"{person['role']} · drive `{drive_name}`")
 
 my_open = h.questions(person=me, status="open")
