@@ -8,17 +8,20 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Create `.venv` and install dependencies
 - [x] First local commit (skeleton + this checklist)
 
-**Now working on:** step 1, toy data.
+**Now working on:** step 2, drive, tools and guardrails.
 
 ## 1. Toy data (first, because the tools are tested against it)
-- [ ] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C), lab SOP text, `manifest.json`
-- [ ] Generator for the re-run file (batch 3) used in run 2
-- [ ] Generator for `clean/`, where there's no flaw and a real effect
-- [ ] The generator checks its own results and exits with an error if any fail:
-  - batch 1 alone: p > 0.05
-  - batch 1 and batch 2 pooled: drop of at least 30%, p < 0.01
-  - batch 3: no effect
-  - clean folder: drop of at least 30%, p < 0.05
+- [x] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C, executed so it has saved outputs), lab SOP, `manifest.json`
+- [x] Generator for the re-run file (batch 3), kept in `planted_batch_issue.incoming/` until run 2 uploads it
+- [x] Generator for `clean/`, where there's no flaw and a real effect
+- [x] The generator checks its own results and exits with an error if any fail (default seed 20261002):
+  - batch 1 alone: drop 2.4%, p = 0.63 (no effect)
+  - batch 1 and batch 2 pooled: drop 37.3%, p = 1e-05 (the fake hit)
+  - batches 1 + 3, each plate compared with its own vehicle: drop 3.3%, p = 0.27 (no effect)
+  - clean folder: drop 35.6%, p = 1e-19 (real hit)
+- [x] Answer key for each drive (`<drive>.expected.json`), kept outside the drive so the harness can't read it
+- [x] Tests: `tests/test_datagen.py`
+- [ ] Later: try a few other seeds to make extra planted and clean drives
 
 ## 2. Drive, tools, guardrails (no LLM yet)
 - [ ] Drive layer: read the manifest, look up file owners, write files with a `.lineage.json`
@@ -53,6 +56,10 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [ ] One tab per scientist (`?as=A`, `?as=B`, `?as=C`)
 - [ ] Views: Drive, My questions (with answer choices), Approval inbox, Findings, Trace
 - [ ] Upload a file (for the run-2 demo)
+- [ ] Toy-data playground page:
+  - generate a drive from the UI (pick the scenario and seed, click Generate), calling the same `datagen` code
+  - plot the readings per plate (vehicle vs ABC-12, coloured by batch) and show the run metadata
+  - show the scenario's checks (pass or fail) and the answer key, so it's easy to experiment with different seeds
 
 ## 6. Evals
 - [ ] `planted_batch_issue/`: asked the right people, correct stats, no causal wording, re-run plan with vehicle on the plate
