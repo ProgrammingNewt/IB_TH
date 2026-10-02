@@ -1,4 +1,5 @@
 """The Lab page: what one scientist sees. Pick who you are in the sidebar (or ?as=B)."""
+import datetime as dt
 import json
 import tempfile
 import time
@@ -121,34 +122,72 @@ tab_ask, tab_q, tab_drive, tab_findings, tab_trace = st.tabs(
 
 # ---- Ask ------------------------------------------------------------------------------
 
+STATUS_STATE = {"working": "running", "waiting": "running", "done": "complete", "failed": "error"}
+
+
+def _age(iso: str) -> str:
+    secs = int((dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(iso)).total_seconds())
+    return f"{secs}s" if secs < 120 else f"{secs // 60} min"
+
+
+@st.fragment(run_every=1)
+def conversation():
+    """Each request and its live reply, like a chat. Refreshes every second on its own."""
+    threads = c.harness_for(drive_name).threads(me)[-10:]
+    if not threads:
+        st.caption("Ask a question about this drive's experiment, e.g. \"Is ABC-12 a hit?\"")
+    for t in threads:
+        by_me = t["by"] == me
+        with st.chat_message("user" if by_me else "human", avatar=None if by_me else "👤"):
+            who = "" if by_me else f"**{people.get(t['by'], {}).get('name', t['by'])}:** "
+            st.markdown(who + ("📎 " if t["kind"] == "upload" else "") + t["text"])
+        with st.chat_message("assistant", avatar="🧪"):
+            last = t["steps"][-1] if t["steps"] else {"text": "…", "at": t["started"]}
+            live = t["state"] in ("working", "waiting")
+            label = last["text"] + (f"  ·  {_age(last['at'])}" if live else "")
+            with st.status(label, state=STATUS_STATE.get(t["state"], "running"),
+                           expanded=live and t is threads[-1]):
+                for step in t["steps"]:
+                    st.markdown(f"`{step['at'][11:19]}` {step['text']}")
+            if t["state"] == "waiting":
+                st.caption("Whoever was asked answers in their ❓ My questions tab. "
+                           "This updates as soon as they do.")
+
+
 with tab_ask:
-    with st.form("ask", clear_on_submit=True):
-        text = st.text_input("Ask the harness", placeholder="Is ABC-12 a hit?")
-        if st.form_submit_button("Send", type="primary") and text.strip():
-            submit(f"Request: {text.strip()}", lambda hh, who, t=text.strip(): hh.message(who, t))
+    conversation()
+    prompt = st.chat_input("Ask the harness, e.g. Is ABC-12 a hit?")
+    if prompt and prompt.strip():
+        if runner.busy():
+            st.warning("The harness is busy with another job. Try again when it finishes.")
+        else:
+            pid = h.receive(me, prompt.strip())          # instant acknowledgement, no model call
+            submit(f"Request: {prompt.strip()}",
+                   lambda hh, who, t=prompt.strip(), p=pid: hh.message(who, t, progress_id=p))
+
+    inbox = list(reversed(h.inbox(me)))
+    with st.expander(f"Inbox ({len(inbox)})", expanded=False):
+        if not inbox:
+            st.caption("Nothing yet.")
+        open_ids = {q["id"]: q for q in my_open}
+        for m in inbox:
+            with st.container(border=True):
+                st.caption(f"{c.KIND_BADGE.get(m['kind'], m['kind'])} · {m['at'][11:19]} UTC"
+                           + (f" · `{m['ref']}`" if m.get("ref") else ""))
+                st.write(m["text"])
+                q = open_ids.get(m.get("ref"))
+                if m["kind"] == "question" and q:
+                    st.caption("Options: " + " · ".join(ch["label"] for ch in q["choices"]) +
+                               ". Answer in the ❓ My questions tab.")
     goals = h.goals()
     if goals:
-        st.subheader("Goals on this drive")
-        st.dataframe(pd.DataFrame([{
-            "goal": g["id"], "question": g["question"],
-            "asked by": people.get(g["requester"], {}).get("name"), "status": g["status"],
-            "runs": ", ".join(g["runs"]),
-            "verdict": g["history"][-1]["verdict"] if g["history"] else ""} for g in goals]),
-            hide_index=True, width="stretch")
-    st.subheader("Inbox")
-    inbox = list(reversed(h.inbox(me)))
-    if not inbox:
-        st.caption("Nothing yet.")
-    open_ids = {q["id"]: q for q in my_open}
-    for m in inbox:
-        with st.container(border=True):
-            st.caption(f"{c.KIND_BADGE.get(m['kind'], m['kind'])} · {m['at'][11:19]} UTC"
-                       + (f" · `{m['ref']}`" if m.get("ref") else ""))
-            st.write(m["text"])
-            q = open_ids.get(m.get("ref"))
-            if m["kind"] == "question" and q:
-                st.caption("Options: " + " · ".join(ch["label"] for ch in q["choices"]) +
-                           ". Answer in the ❓ My questions tab.")
+        with st.expander("Goals on this drive"):
+            st.dataframe(pd.DataFrame([{
+                "goal": g["id"], "question": g["question"],
+                "asked by": people.get(g["requester"], {}).get("name"), "status": g["status"],
+                "runs": ", ".join(g["runs"]),
+                "verdict": g["history"][-1]["verdict"] if g["history"] else ""} for g in goals]),
+                hide_index=True, width="stretch")
 
 # ---- My questions ------------------------------------------------------------------------
 

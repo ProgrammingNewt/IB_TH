@@ -132,9 +132,12 @@ class Drive:
         return json.loads(p.read_text()) if p.exists() else default
 
     def write_json(self, rel: str, obj: Any) -> None:
+        """Write atomically, so a reader (the UI polling progress) never sees half a file."""
         p = self.path(rel)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj, indent=2, default=str))
+        tmp = p.with_name(f".{p.name}.tmp")
+        tmp.write_text(json.dumps(obj, indent=2, default=str))
+        tmp.replace(p)
 
     def write_artifact(self, rel: str, write: Callable[[Path], None], *, tool: str,
                        inputs: list[str], facts_used: list[str] | None = None) -> str:

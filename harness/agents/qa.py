@@ -48,6 +48,36 @@ def _labels_for(values: list[dict]) -> Callable[[dict], str | None]:
     return check
 
 
+# Progress updates, shown live while a request runs. Fixed and instant: no model call.
+PROGRESS = {
+    "received": "Got it. Working on: {text}",
+    "understood": "Understood: a new analysis{about}.",
+    "not_analysis": "That isn't a request for an analysis.",
+    "answering": "Looking that up in the findings.",
+    "uploaded": "{name} uploaded {file}. Re-evaluating: {question}",
+    "reevaluating": "Re-evaluating: {question}",
+    "extract_protocol_fields": "Reading the protocol ({path})",
+    "parse_xlsx": "Reading the plate readings ({path})",
+    "read_notebook": "Reading the analysis notebook ({path})",
+    "run_notebook": "Re-running the analysis notebook ({path})",
+    "read_table": "Reading the table {path}",
+    "read_document": "Reading {path}",
+    "check_consistency": "Checking every plate against the protocol",
+    "filter_dataset": "Applying the team's decisions to the data",
+    "run_stats": "Running the statistics",
+    "plan_followup_plate": "Drafting a follow-up plate",
+    "search_sops": "Looking up the lab's SOPs",
+    "load_skill": "Loading the {name} procedure",
+    "asking": "Found something to check with the team. Writing the questions",
+    "waiting": "Waiting for answers: {who}",
+    "answered": "{name} answered. Continuing.",
+    "reviewing": "Reviewing the conclusion before anyone sees it",
+    "revising": "The review sent it back. Revising.",
+    "writing": "Writing up the findings",
+    "done": "Done: {verdict}. The findings are in the Findings tab.",
+    "failed": "Stopped: {reason}",
+}
+
 TASKS: dict[str, tuple[str, Callable[[dict], str | None]]] = {
     "ask": (prompts.QA_ASK, _message),
     "report": (prompts.QA_REPORT, _message),
@@ -128,6 +158,14 @@ class QA:
         out = self.run("labels", {"to": person, "question": question, "values": values},
                        {"labels": fallback}, check=_labels_for(values))
         return [x.strip() for x in out["labels"]]
+
+    @staticmethod
+    def progress(kind: str, **details) -> str:
+        """A live progress line. No model call."""
+        class _Blank(dict):
+            def __missing__(self, key):
+                return ""
+        return PROGRESS[kind].format_map(_Blank(details))
 
     @staticmethod
     def notice(kind: str, **details) -> str:

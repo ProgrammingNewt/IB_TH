@@ -93,30 +93,83 @@ class Harness:
     def _trace(self, run: dict, event: dict) -> None:
         jsonl_tracer(self.drive.path(f"trace/{run['id']}.jsonl"))(event)
 
-    # ---- entry points -------------------------------------------------------------
+    # ---- progress threads -----------------------------------------------------------
+    # One thread per request (or upload). The UI shows it live, like a chat reply. Every
+    # line comes from the Q&A agent's fixed progress templates: instant, no model call.
 
-    def message(self, sender: str, text: str) -> dict:
-        """A scientist typed something. The Router decides what to do with it."""
+    def receive(self, sender: str, text: str, kind: str = "request") -> str:
+        """Acknowledge a request at once, before any model call. Returns the thread id."""
         if sender not in self.drive.people:
             raise ValueError(f"unknown person {sender!r}")
-        routed = self.router.run(self._person(sender), text)
-        if routed["intent"] == "question_about_findings":
-            findings = self.drive.path("findings/findings.md")
-            reply = self.qa.answer(self._person(sender), text,
-                                   findings.read_text() if findings.exists() else "")
-            self._notify(sender, "answer", reply)
-            return {"intent": routed["intent"], "reply": reply}
-        if routed["intent"] != "new_analysis":
-            reply = self.qa.notice("not_a_request")
-            self._notify(sender, "notice", reply)
-            return {"intent": routed["intent"], "reply": reply}
+        pid = self._new_id("progress", "p")
+        self._save("progress", {"id": pid, "by": sender, "kind": kind, "text": text, "goal": None,
+                                "state": "working", "started": _now(), "steps": []})
+        if kind == "request":
+            self._step(pid, self.qa.progress("received", text=text))
+        return pid
 
-        goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
-                "slots": routed["slots"], "status": "open", "runs": [], "history": [],
-                "created": _now()}
-        self._save("goals", goal)
-        return {"intent": "new_analysis", "goal": goal["id"],
-                **self._start_run(goal, f"{self._person(sender)['name']} asked: {text}")}
+    def threads(self, person: str | None = None) -> list[dict]:
+        """Progress threads, oldest first: a person's own, and those for goals they asked."""
+        out = []
+        for t in (self._load("progress", i) for i in self._ids("progress")):
+            if t is None:
+                continue
+            goal = self._load("goals", t["goal"]) if t.get("goal") else None
+            if person is None or t["by"] == person or (goal and goal["requester"] == person):
+                out.append(t)
+        return out
+
+    def _step(self, pid: str | None, text: str, state: str | None = None, **fields) -> None:
+        if not pid:
+            return
+        t = self._load("progress", pid)
+        if t is None:
+            return
+        t["steps"].append({"at": _now(), "text": text})
+        if state:
+            t["state"] = state
+        t.update(fields)
+        self._save("progress", t)
+
+    # ---- entry points -------------------------------------------------------------
+
+    def message(self, sender: str, text: str, progress_id: str | None = None) -> dict:
+        """A scientist typed something. The Router decides what to do with it.
+
+        The UI calls `receive` first, so the person sees an acknowledgement at once, and
+        passes its id here. Called without one, this acknowledges itself."""
+        pid = progress_id or self.receive(sender, text)
+        try:
+            routed = self.router.run(self._person(sender), text)
+            if routed["intent"] == "question_about_findings":
+                self._step(pid, self.qa.progress("answering"))
+                findings = self.drive.path("findings/findings.md")
+                reply = self.qa.answer(self._person(sender), text,
+                                       findings.read_text() if findings.exists() else "")
+                self._notify(sender, "answer", reply)
+                self._step(pid, reply, state="done")
+                return {"intent": routed["intent"], "reply": reply, "progress": pid}
+            if routed["intent"] != "new_analysis":
+                reply = self.qa.notice("not_a_request")
+                self._notify(sender, "notice", reply)
+                self._step(pid, reply, state="done")
+                return {"intent": routed["intent"], "reply": reply, "progress": pid}
+
+            compound = routed["slots"].get("compound")
+            self._step(pid, self.qa.progress("understood", about=f" of {compound}" if compound else ""))
+            goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
+                    "slots": routed["slots"], "status": "open", "runs": [], "history": [],
+                    "created": _now()}
+            self._save("goals", goal)
+            t = self._load("progress", pid)
+            t["goal"] = goal["id"]
+            self._save("progress", t)
+            return {"intent": "new_analysis", "goal": goal["id"], "progress": pid,
+                    **self._start_run(goal, f"{self._person(sender)['name']} asked: {text}", pid)}
+        except Exception as exc:
+            self._step(pid, self.qa.progress("failed", reason=f"{type(exc).__name__}: {exc}"),
+                       state="failed")
+            raise
 
     def upload(self, src, owner: str, description: str, replace: bool = False,
                reevaluate: bool = True) -> dict:
@@ -128,7 +181,7 @@ class Harness:
             self._mark_stale(f"{rel} {what} by {self._person(owner)['name']}")
             return {"uploaded": rel, "runs": []}
         return {"uploaded": rel, "runs": self.reevaluate(
-            f"File {what} by {self._person(owner)['name']}: {rel}.")}
+            f"File {what} by {self._person(owner)['name']}: {rel}.", by=owner, uploaded=rel)}
 
     def remove(self, rel: str, by: str) -> dict:
         """The file's owner removed it. It goes to trash/, and findings that used it are
@@ -137,15 +190,25 @@ class Harness:
         self._mark_stale(f"{rel} removed by {self._person(by)['name']}")
         return result
 
-    def reevaluate(self, reason: str) -> list[dict]:
-        """Start a new run for every goal that already has one."""
+    def reevaluate(self, reason: str, by: str | None = None, uploaded: str | None = None) -> list[dict]:
+        """Start a new run for every goal that already has one, each with its own thread."""
         runs = []
         for goal in self.goals():
             if goal["runs"]:
                 goal["stale"] = []
                 self._save("goals", goal)
+                who = by or goal["requester"]
+                pid = self.receive(who, f"Uploaded {uploaded}" if uploaded else reason,
+                                   kind="upload" if uploaded else "reevaluate")
+                t = self._load("progress", pid)
+                t["goal"] = goal["id"]
+                self._save("progress", t)
+                self._step(pid, self.qa.progress("uploaded", name=self._person(who)["name"],
+                                                 file=uploaded, question=goal["question"])
+                           if uploaded else self.qa.progress("reevaluating", question=goal["question"]))
                 runs.append(self._start_run(goal, f"{reason} Re-evaluate the goal with the files "
-                                                  "as they are now. Reuse facts the team already confirmed."))
+                                                  "as they are now. Reuse facts the team already confirmed.",
+                                            pid))
         return runs
 
     def _mark_stale(self, change: str) -> None:
@@ -207,15 +270,18 @@ class Harness:
         q.update(status="answered", answer={"by": by, "choice": choice, "text": text,
                                             "at": _now(), **recorded})
         self._save("questions", q)
+        run = self._load("runs", q["run_id"]) or {}
+        if run.get("status") == "waiting":
+            self._step(run.get("progress_id"), self.qa.progress("answered", name=self._person(by)["name"]))
         return {"recorded_as": "fact" if "fact" in recorded else "decision", **recorded,
                 **self._maybe_resume(q["run_id"])}
 
     # ---- runs -----------------------------------------------------------------------
 
-    def _start_run(self, goal: dict, trigger: str) -> dict:
+    def _start_run(self, goal: dict, trigger: str, progress_id: str | None = None) -> dict:
         run = {"id": self._new_id("runs", "r"), "goal_id": goal["id"], "trigger": trigger,
                "status": "running", "tool_calls": 0, "turns": 0, "revisions": 0, "nudges": 0,
-               "pending": None, "started": _now(),
+               "pending": None, "started": _now(), "progress_id": progress_id,
                "messages": Planner.first_messages(self._context(goal, trigger))}
         goal["runs"].append(run["id"])
         self._save("goals", goal)
@@ -270,8 +336,12 @@ class Harness:
         self.gw.tokens_used = run.get("tokens_used", 0)     # each run has its own token budget
         self.gw.tracer = jsonl_tracer(self.drive.path(f"trace/{run['id']}.jsonl"))
         state = RunState(goal=goal["slots"], budget=self.tool_budget, tool_calls=run["tool_calls"])
+        pid = run.get("progress_id")
 
         def on_tool(name: str, args: dict, result: dict) -> None:
+            if result.get("ok"):
+                self._step(pid, self.qa.progress(name, path=args.get("path", ""),
+                                                 name=args.get("name", "")))
             self._after_tool(run, goal, name, args, result)
             self._trace(run, {"event": "tool", "tool": name, "args": args, "ok": result.get("ok"),
                               "blocked": result.get("blocked"), "error": result.get("error")})
@@ -281,9 +351,11 @@ class Harness:
             if handoff.kind == "failed":
                 self._notify(goal["requester"], "notice",
                              self.qa.notice("run_stopped", reason=handoff.reason), run["id"])
+                self._step(pid, self.qa.progress("failed", reason=handoff.reason), state="failed")
                 return self._finish(run, "failed", handoff.reason)
 
             if handoff.kind == "ask":
+                self._step(pid, self.qa.progress("asking"))
                 created, errors = self._create_questions(run, goal, handoff.args)
                 if not created:
                     tool_reply(run, handoff.call_id, {"ok": False, "errors": errors})
@@ -293,14 +365,34 @@ class Harness:
                                                       "questions": created, "errors": errors})
                 self._save_run(run)
                 self._trace(run, {"event": "waiting", "questions": created, "errors": errors})
+                self._step(pid, self.qa.progress("waiting", who=self._waiting_for(created)),
+                           state="waiting")
                 return {"run": run["id"], "status": "waiting", "questions": created}
 
+            self._step(pid, self.qa.progress("reviewing"), state="working")
             done = self._review_and_finish(run, goal, handoff.args)
             if done:
                 return done
+            self._step(pid, self.qa.progress("revising"))
             tool_reply(run, handoff.call_id, {"ok": False, "review": run["last_review"],
                                               "revisions_left": self.max_revisions - run["revisions"]})
             self._save_run(run)
+
+    def _waiting_for(self, qids: list[str]) -> str:
+        """'Ben Okafor on plate P2, Ana Ruiz on the threshold'."""
+        parts = []
+        for qid in qids:
+            q = self._load("questions", qid)
+            kind, _, ref = q["about"].partition(":")
+            if kind == "contradiction":
+                c = next((c for c in self.drive.contradictions() if c["id"] == ref), {})
+                what = f"plate {c.get('plate_id', ref)}"
+            elif kind == "slot":
+                what = f"the {ref}"
+            else:
+                what = "a plan approval"
+            parts.append(f"{self._person(q['to'])['name']} on {what}")
+        return ", ".join(parts)
 
     def _after_tool(self, run: dict, goal: dict, name: str, args: dict, result: dict) -> None:
         if args.get("path") and self.drive.owner_of(args["path"]):
@@ -410,6 +502,7 @@ class Harness:
             if run["revisions"] <= self.max_revisions:
                 return None
         unresolved = [] if review["pass"] else review["problems"]
+        self._step(run.get("progress_id"), self.qa.progress("writing"))
 
         previous = goal["history"][-1] if goal["history"] else None
         goal["history"].append({"run": run["id"], "verdict": draft.get("verdict"),
@@ -433,6 +526,8 @@ class Harness:
         self._notify(goal["requester"], "report",
                      self.qa.report(self._person(goal["requester"]), md), "findings/findings.md")
         status = "done" if review["pass"] else "done_with_problems"
+        self._step(run.get("progress_id"), self.qa.progress("done", verdict=draft.get("verdict", "finished")),
+                   state="done")
         return self._finish(run, status, "; ".join(unresolved))
 
     def _rerender(self, goal_id: str) -> None:

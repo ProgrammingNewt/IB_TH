@@ -155,6 +155,22 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert "## What changed since the last run" in findings
     assert f"Drop vs vehicle: {stats_run1['drop']} → {stats_run2['drop']}" in findings
     assert client.replies == []                       # every scripted reply was used
+
+    # Ana's progress thread told the whole story as it happened, starting before any model call.
+    first, upload = h.threads("A")
+    steps = [x["text"] for x in first["steps"]]
+    assert steps[0] == "Got it. Working on: Is ABC-12 a hit?"
+    assert steps[1] == "Understood: a new analysis of ABC-12."
+    assert "Reading the protocol (raw/protocol.pdf)" in steps
+    assert "Waiting for answers: Ben Okafor on plate P2, Ana Ruiz on the threshold" in steps
+    assert "Ben Okafor answered. Continuing." in steps and "Ana Ruiz answered. Continuing." in steps
+    assert steps.index("Running the statistics") > steps.index("Ana Ruiz answered. Continuing.")
+    assert steps[-1] == "Done: not a hit. The findings are in the Findings tab."
+    assert first["state"] == "done" and first["goal"] == "g-001"
+    # Ben's upload started its own thread, which Ana sees because it's her goal.
+    assert upload["by"] == "B" and upload["kind"] == "upload" and upload["state"] == "done"
+    assert upload["steps"][0]["text"].startswith("Ben Okafor uploaded raw/readings_rerun.xlsx")
+    assert [t["id"] for t in h.threads("B")] == [upload["id"]]
     # The Reviewer saw the SOP, so it can check claims that cite it.
     review_call = next(c for c in client.calls if "Reviewer" in c["messages"][0]["content"])
     assert "SOP-ASSAY-004" in review_call["messages"][1]["content"]
@@ -276,3 +292,12 @@ def test_a_question_must_name_the_decision(setup):
     assert "exclude it from the analysis, or keep it?" in h._load("questions", qid)["message"]
     retry = client.calls[1]["messages"][-1]["content"]
     assert "must name the options: exclude, keep" in retry
+
+
+def test_receive_acknowledges_before_any_model_call(setup):
+    h, client, _, _ = setup
+    pid = h.receive("A", "Is ABC-12 a hit?")
+    assert client.calls == []
+    t = h.threads("A")[0]
+    assert t["id"] == pid and t["state"] == "working"
+    assert t["steps"][0]["text"] == "Got it. Working on: Is ABC-12 a hit?"
