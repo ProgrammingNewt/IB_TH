@@ -2,6 +2,7 @@
 and the plots."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import threading
@@ -47,7 +48,44 @@ def generate(scenario: str, seed: int, name: str | None = None) -> tuple[Path | 
         if p.exists():
             shutil.rmtree(p)
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    return write_scenario(s, WORKSPACE, drive_name=name), s.checks, ""
+    folder = write_scenario(s, WORKSPACE, drive_name=name)
+    manifest = json.loads((folder / "manifest.json").read_text())
+    manifest["generated"] = {"scenario": scenario, "seed": seed}      # so it can be reset later
+    (folder / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    return folder, s.checks, ""
+
+
+# Folders the harness writes. Team files live in raw/ and sops/, and trash/ keeps removed ones.
+HARNESS_FOLDERS = ("goals", "runs", "questions", "messages", "findings", "facts", "derived", "trace")
+
+
+def clear_harness_work(drive_name: str) -> list[str]:
+    """Delete everything the harness produced on a drive. Team files stay, uploads included."""
+    root = WORKSPACE / drive_name
+    cleared = [f for f in HARNESS_FOLDERS if (root / f).exists()]
+    for f in cleared:
+        shutil.rmtree(root / f)
+    return cleared
+
+
+def generated_from(drive_name: str) -> tuple[str, int] | None:
+    """Which scenario and seed built a drive, if it was generated."""
+    manifest = json.loads((WORKSPACE / drive_name / "manifest.json").read_text())
+    if "generated" in manifest:
+        return manifest["generated"]["scenario"], int(manifest["generated"]["seed"])
+    # Drives made before the manifest recorded this: the default ones are named after their scenario.
+    if drive_name in SCENARIOS:
+        return drive_name, 20261002
+    return None
+
+
+def reset_drive(drive_name: str) -> str:
+    """Rebuild a generated drive exactly as it was first made. Uploads are removed too."""
+    origin = generated_from(drive_name)
+    if origin is None:
+        return f"{drive_name} wasn't generated, so there's nothing to reset it to"
+    _, _, error = generate(origin[0], origin[1], name=drive_name)
+    return error
 
 
 def ensure_default_drives() -> None:
@@ -57,7 +95,6 @@ def ensure_default_drives() -> None:
 
 
 def expected(drive_name: str) -> dict | None:
-    import json
     p = WORKSPACE / f"{drive_name}.expected.json"
     return json.loads(p.read_text()) if p.exists() else None
 

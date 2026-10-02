@@ -35,4 +35,6 @@ The demo, in the UI:
 
 The toy-data playground page generates new drives from a scenario and a seed, and plots their readings.
 
+To replay the demo, use **Start fresh** in the sidebar: clear the harness's work, or reset the drive to its generated files.
+
 Streamlit only reloads files in `ui/`. After changing anything in `harness/`, restart the server.

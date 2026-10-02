@@ -48,3 +48,25 @@ def test_job_runner_runs_one_job_at_a_time():
     while r.busy():
         time.sleep(0.05)
     assert r.history[0].error.startswith("ZeroDivisionError")
+
+
+def test_start_fresh(workspace, tmp_path):
+    sys.path.insert(0, str(UI))
+    import importlib
+    import common
+    importlib.reload(common)                        # pick up HARNESS_WORKSPACE
+    root = workspace / "planted_batch_issue"
+    for folder in ("goals", "runs", "messages", "findings"):
+        (root / folder).mkdir()
+        (root / folder / "x.json").write_text("{}")
+    upload = tmp_path / "mine.txt"
+    upload.write_text("my notes")
+    from harness.drive.store import Drive
+    Drive(root).upload(upload, "C", "notes")
+
+    assert set(common.clear_harness_work("planted_batch_issue")) == {"goals", "runs", "messages", "findings"}
+    assert not (root / "goals").exists() and (root / "raw/mine.txt").exists()     # uploads kept
+
+    assert common.reset_drive("planted_batch_issue") == ""                          # back to generated
+    assert not (root / "raw/mine.txt").exists() and (root / "raw/readings.xlsx").exists()
+    assert common.generated_from("planted_batch_issue") == ("planted_batch_issue", 20261002)

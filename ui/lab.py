@@ -39,6 +39,43 @@ with st.sidebar.expander("Model providers", expanded=False):
 refuse = st.session_state.get("refuse", False)
 
 
+with st.sidebar.expander("Start fresh"):
+    busy = runner.busy()
+    pending = st.session_state.get("fresh")
+    options = {
+        "work": ("Clear the harness's work",
+                 "Deletes goals, runs, questions, every inbox, findings, traces and derived files. "
+                 "All team files stay, including uploads."),
+        "reset": ("Reset to the generated files",
+                  "Rebuilds the drive exactly as it was generated. Uploads and removals are undone too."),
+        "inbox": ("Clear my inbox", "Deletes only your own messages."),
+    }
+    for key, (label, help_text) in options.items():
+        if st.button(label, key=f"fresh-{key}", disabled=busy, help=help_text, width="stretch"):
+            st.session_state["fresh"] = key
+            st.rerun()
+    if pending:
+        label, help_text = options[pending]
+        st.warning(f"**{label}** on `{drive_name}`?\n\n{help_text}")
+        yes, no = st.columns(2)
+        if yes.button("Yes", type="primary", key="fresh-yes", disabled=busy):
+            if pending == "work":
+                c.clear_harness_work(drive_name)
+            elif pending == "reset":
+                problem = c.reset_drive(drive_name)
+                if problem:
+                    st.error(problem)
+            else:
+                drive.write_json(f"messages/{me}.json", [])
+            st.session_state.pop("fresh", None)
+            st.rerun()
+        if no.button("Cancel", key="fresh-no"):
+            st.session_state.pop("fresh", None)
+            st.rerun()
+    if busy:
+        st.caption("Disabled while a job is running.")
+
+
 @st.fragment(run_every=2)
 def job_status():
     job = runner.current
