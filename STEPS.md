@@ -37,6 +37,8 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Only a file's owner can confirm a fact about it (anyone else's answer is kept as a comment). Facts are scoped to file + plate + batch
 - [x] Tool registry (`harness/tools/registry.py`): the one entry point that runs a tool through the guardrails, plus the OpenAI-format tool list for the Planner
 - [x] Tests: `tests/test_tools.py` walks run 1 and run 2 by hand and checks every number against the answer key
+- [x] Checkpoint before step 3: 17/17 tests pass, plus a manual walk of run 1 on a scratch drive. Checked the files it leaves behind: the contradiction (P2: 48 h and 0 vehicle wells, B decides), B's fact scoped to file + plate, stats on P1 only (2.4% drop, p = 0.63, not a hit), lineage linking the analysis set to fact f-001, and a re-run plan pending approval. Nothing needed fixing
+- [ ] Not tested yet, and checked in later steps: the LLM-backed protocol extractor (step 4), pause and resume (step 4), and a clean install from a fresh clone (step 7, Docker)
 
 ## 3. LLM gateway
 - [ ] One OpenAI-compatible client, configured by `config.yaml`
