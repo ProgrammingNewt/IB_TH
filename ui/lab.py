@@ -48,23 +48,35 @@ with st.sidebar.expander("Start fresh"):
     busy = runner.busy()
     pending = st.session_state.get("fresh")
     options = {
-        "work": ("Clear the harness's work",
+        "all": ("Clear everything",
+                "Every drive back to zero: all goals, runs, questions, inboxes, chat replies, "
+                "findings, traces and uploads. The toy data is rebuilt exactly as it was generated."),
+        "work": ("Clear the harness's work on this drive",
                  "Deletes goals, runs, questions, every inbox, findings, traces and derived files. "
                  "All team files stay, including uploads."),
-        "reset": ("Reset to the generated files",
+        "reset": ("Reset this drive to its generated files",
                   "Rebuilds the drive exactly as it was generated. Uploads and removals are undone too."),
         "inbox": ("Clear my inbox", "Deletes only your own messages."),
     }
     for key, (label, help_text) in options.items():
-        if st.button(label, key=f"fresh-{key}", disabled=busy, help=help_text, width="stretch"):
+        if key == "work":
+            st.caption("Or just this drive:")
+        if st.button(label, key=f"fresh-{key}", disabled=busy, help=help_text, width="stretch",
+                     type="primary" if key == "all" else "secondary"):
             st.session_state["fresh"] = key
             st.rerun()
     if pending:
         label, help_text = options[pending]
-        st.warning(f"**{label}** on `{drive_name}`?\n\n{help_text}")
+        where = "on every drive" if pending == "all" else f"on `{drive_name}`"
+        st.warning(f"**{label}** {where}?\n\n{help_text}")
         yes, no = st.columns(2)
         if yes.button("Yes", type="primary", key="fresh-yes", disabled=busy):
-            if pending == "work":
+            if pending == "all":
+                c.clear_everything()
+                runner.clear_history()
+                for k in ("seen_job", "known_questions", "confirm_remove"):
+                    st.session_state.pop(k, None)
+            elif pending == "work":
                 c.clear_harness_work(drive_name)
             elif pending == "reset":
                 problem = c.reset_drive(drive_name)

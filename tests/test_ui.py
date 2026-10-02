@@ -70,3 +70,27 @@ def test_start_fresh(workspace, tmp_path):
     assert common.reset_drive("planted_batch_issue") == ""                          # back to generated
     assert not (root / "raw/mine.txt").exists() and (root / "raw/readings.xlsx").exists()
     assert common.generated_from("planted_batch_issue") == ("planted_batch_issue", 20261002)
+
+
+def test_clear_everything(workspace, tmp_path):
+    sys.path.insert(0, str(UI))
+    import importlib
+    import common
+    importlib.reload(common)
+    from harness.drive.store import Drive
+    for name in ("planted_batch_issue", "clean"):
+        root = workspace / name
+        for folder in common.HARNESS_FOLDERS:
+            (root / folder).mkdir(exist_ok=True)
+            (root / folder / "x.json").write_text("{}")
+        note = tmp_path / f"{name}-notes.txt"
+        note.write_text("mine")
+        Drive(root).upload(note, "C", "notes")
+    Drive(workspace / "clean").remove("raw/analysis.ipynb", by="C")
+
+    assert len(common.clear_everything()) == 2
+    for name in ("planted_batch_issue", "clean"):
+        root = workspace / name
+        assert sorted(p.name for p in root.iterdir()) == ["manifest.json", "raw", "sops"]
+        assert sorted(p.name for p in (root / "raw").iterdir()) == [
+            "analysis.ipynb", "protocol.pdf", "readings.xlsx"]          # uploads gone, removals undone

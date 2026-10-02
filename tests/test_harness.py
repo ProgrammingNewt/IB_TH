@@ -308,14 +308,15 @@ def test_receive_acknowledges_before_any_model_call(setup):
     assert t["steps"][0]["text"] == "Got it. Working on: Is ABC-12 a hit?"
 
 
-def _goal_after_parsing(h, asked):
-    from harness.state import RunState
+def _goal_after_parsing(h, asked: dict):
+    """A goal whose requester named `asked` (slot -> term), after the files are read."""
     from harness.tools.registry import call
-    goal = {"id": "g-001", "requester": "A", "question": f"Is {asked} a hit?",
-            "slots": {"compound": asked}, "status": "open", "runs": [], "history": []}
+    from harness.state import RunState
+    goal = {"id": "g-001", "requester": "A", "question": "Is it a hit?", "slots": dict(asked),
+            "asked_slots": dict(asked), "status": "open", "runs": [], "history": []}
     h._save("goals", goal)
     run = {"id": "r-001", "goal_id": "g-001", "status": "done", "messages": [], "pending": None,
-           "progress_id": h.receive("A", f"Is {asked} a hit?")}
+           "progress_id": h.receive("A", "Is it a hit?")}
     s = RunState(goal=goal["slots"])
     results = []
     for tool, path in [("extract_protocol_fields", "raw/protocol.pdf"), ("parse_xlsx", "raw/readings.xlsx")]:
@@ -325,34 +326,85 @@ def _goal_after_parsing(h, asked):
     return goal, run, results
 
 
-def test_a_compound_not_in_the_data_is_never_substituted(setup):
-    """'abs 12' isn't ABC-12. The Planner is told to ask, run_stats can't swap it, and the
-    question offers the compounds that are actually in the files."""
+# Terms the files don't contain. The files have compound ABC-12, readout
+# "SA-beta-gal", and comparator "vehicle".
+NOT_IN_FILES = [
+    ("compound", "XYZ-99"), ("compound", "ABD-12"), ("compound", "abs 12"), ("compound", "ABC-121"),
+    ("compound", "ABC"),
+    ("readout", "IL-6 secretion"), ("readout", "cell viability"),
+    ("comparator", "untreated cells"), ("comparator", "rapamycin"),
+]
+
+
+@pytest.mark.parametrize("slot,term", NOT_IN_FILES)
+def test_a_term_not_in_the_files_is_asked_about_never_substituted(setup, slot, term):
     h, client, _, _ = setup
-    goal, run, results = _goal_after_parsing(h, "abs 12")
-    assert "asked about 'abs 12', but the files only have ABC-12" in results[0]["goal_check"]
-    assert goal["slots"]["compound"] == "abs 12"                       # not silently changed
+    goal, run, results = _goal_after_parsing(h, {"compound": "ABC-12", slot: term})
+    assert goal["slots"][slot] == term                                  # kept as asked
+    assert goal["ungrounded"][slot]["asked"] == term
+    assert f"about='slot:{slot}'" in results[-1]["goal_check"]
 
     from harness.state import RunState
     from harness.tools.registry import call
-    s = RunState(goal={**goal["slots"], "threshold": THRESHOLD})
-    h.drive.resolve_contradiction("c-readings-P2", "B", "exclude") if h.drive.contradictions() else None
-    blocked = call(h.drive, s, "run_stats", {"compound": "ABC-12", **THRESHOLD})
-    assert "must analyse the compound the requester asked about ('abs 12')" in blocked["blocked"]
+    s = RunState(goal={**goal["slots"], "threshold": THRESHOLD}, ungrounded=goal["ungrounded"])
+    blocked = call(h.drive, s, "run_stats", {"compound": goal["slots"]["compound"], **THRESHOLD})
+    assert "named things that aren't in the files" in blocked["blocked"]
 
-    client.replies += [say(message="Hi Ana, you asked about abs 12, but the data only has ABC-12. "
-                                   "Which compound did you mean?")]
-    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "slot:compound", "text": ""}]})
+    client.replies += [say(message=f"Hi Ana, you named the {slot} {term}, but the files don't have it. "
+                                   "Which did you mean?")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": f"slot:{slot}", "text": ""}]})
     q = h._load("questions", qid)
-    assert q["to"] == "A" and [c["label"] for c in q["choices"]] == ["ABC-12", "Something else (type it)"]
+    known = goal["ungrounded"][slot]["known"]
+    assert q["to"] == "A" and [c["label"] for c in q["choices"]] == known + ["Something else (type it)"]
     assert h.answer(qid, "A", "c1")["recorded_as"] == "fact"
-    assert h._load("goals", "g-001")["slots"]["compound"] == "ABC-12"
+    settled = h._load("goals", "g-001")
+    assert settled["slots"][slot] == known[0] and slot not in settled["ungrounded"]
 
 
-def test_the_same_name_written_differently_is_read_as_the_data_name(setup):
+@pytest.mark.parametrize("slot,written,files_name", [
+    ("compound", "abc 12", "ABC-12"), ("compound", "ABC12", "ABC-12"), ("compound", "abc-12", "ABC-12"),
+    ("comparator", "Vehicle", "vehicle"), ("readout", "sa beta gal", "SA-beta-gal"),
+    ("readout", "SA beta-gal", "SA-beta-gal"), ("comparator", "DMSO", "0.1% DMSO"),
+])
+def test_the_same_term_written_differently_is_read_as_the_files_name(setup, slot, written, files_name):
     h, _, _, _ = setup
-    goal, run, results = _goal_after_parsing(h, "abc 12")
-    assert goal["slots"]["compound"] == "ABC-12"
-    assert "that's ABC-12 in the data" in results[0]["goal_check"]
+    goal, _, _ = _goal_after_parsing(h, {"compound": "ABC-12", slot: written})
+    assert goal["slots"][slot] == files_name and not goal["ungrounded"]
     steps = [x["text"] for x in h.threads("A")[0]["steps"]]
-    assert 'Reading "abc 12" as ABC-12, the compound in the data.' in steps
+    if written != files_name:
+        assert f'Reading "{written}" as {files_name}, the {slot} in the files.' in steps
+
+
+def test_the_requesters_confirmation_stands(setup):
+    """If the requester insists on a term the files don't have, it isn't asked again."""
+    h, client, _, _ = setup
+    goal, run, _ = _goal_after_parsing(h, {"compound": "XYZ-99"})
+    client.replies += [say(message="Hi Ana, which compound did you mean?")]
+    [qid], _ = h._create_questions(run, goal, {"questions": [{"about": "slot:compound", "text": ""}]})
+    h.answer(qid, "A", "other", "XYZ-99, it's a new batch name")
+    goal = h._load("goals", "g-001")
+    h._ground_slots(run, goal, {})
+    assert goal["ungrounded"] == {} and goal["slots"]["compound"] == "XYZ-99, it's a new batch name"
+
+
+
+def test_what_the_requester_meant_is_asked_first_and_alone(setup):
+    """With an unclear term, the threshold and plate questions wait until it's settled."""
+    h, client, _, _ = setup
+    goal, run, _ = _goal_after_parsing(h, {"compound": "ABC-12", "readout": "IL-6 secretion",
+                                           "comparator": "untreated cells"})
+    from harness.tools.registry import call
+    from harness.state import RunState
+    call(h.drive, RunState(), "check_consistency")
+    client.replies += [say(message="Hi Ana, IL-6 isn't measured here. Should we use SA-beta-gal?"),
+                       say(message="Hi Ana, there are no untreated cells. Should we use vehicle?")]
+    created, errors = h._create_questions(run, goal, {"questions": [
+        {"about": "contradiction:c-readings-P2", "text": "Exclude P2?"},
+        {"about": "slot:threshold", "text": "What's a hit?", "choices": [{"value": THRESHOLD}]},
+        {"about": "slot:readout", "text": ""}]})                     # comparator not even asked
+    asked = sorted(h._load("questions", q)["about"] for q in created)
+    assert asked == ["slot:comparator", "slot:readout"]
+    assert "held back until the requester confirms" in errors[0]
+    comparator = next(h._load("questions", q) for q in created
+                      if h._load("questions", q)["about"] == "slot:comparator")
+    assert [c["label"] for c in comparator["choices"]] == ["vehicle", "Something else (type it)"]

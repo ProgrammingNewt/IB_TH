@@ -27,6 +27,7 @@ def test_planted_run1_and_run2(make_drive):
     # The protocol answers readout and comparison, but leaves the hit criteria open.
     protocol = drive.read_json("facts/protocol.json")
     assert protocol["treatment_hours"] == 72 and protocol["hit_criteria"] is None
+    assert protocol["control"] == "0.1% DMSO"
     state.goal |= {"readout": protocol["readout"], "comparator": protocol["comparator"]}
     assert state.missing_slots() == ["threshold"]
 

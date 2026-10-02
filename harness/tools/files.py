@@ -90,7 +90,7 @@ def regex_protocol_fields(text: str) -> dict:
         "compound": grab(r"Does (\S+) reduce"),
         "readout": grab(r"\((SA-beta-gal)\)"),
         "comparator": grab(r"compared with (\w+)"),
-        "control": grab(r"Vehicle:\s*([^.]+)"),
+        "control": grab(r"Vehicle:\s*(.+?)\.(?:\s|$)"),     # a full stop that ends the sentence, not "0.1"
         "treatment_hours": int(hours) if hours else None,
         "vehicle_on_every_plate": "every plate carries its own vehicle" in flat.lower(),
         "hit_criteria": None if not hit or "to be agreed" in hit.lower() else hit,

@@ -56,7 +56,8 @@ def generate(scenario: str, seed: int, name: str | None = None) -> tuple[Path | 
 
 
 # Folders the harness writes. Team files live in raw/ and sops/, and trash/ keeps removed ones.
-HARNESS_FOLDERS = ("goals", "runs", "questions", "messages", "findings", "facts", "derived", "trace")
+HARNESS_FOLDERS = ("goals", "runs", "questions", "messages", "progress", "findings", "facts",
+                   "derived", "trace")
 
 
 def clear_harness_work(drive_name: str) -> list[str]:
@@ -66,6 +67,20 @@ def clear_harness_work(drive_name: str) -> list[str]:
     for f in cleared:
         shutil.rmtree(root / f)
     return cleared
+
+
+def clear_everything() -> list[str]:
+    """Every drive back to zero: generated drives are rebuilt exactly as generated (uploads
+    and removals undone); any other drive keeps its files but loses all harness work."""
+    done = []
+    for name in drives():
+        if generated_from(name):
+            reset_drive(name)
+            done.append(f"{name}: rebuilt from its scenario and seed")
+        else:
+            clear_harness_work(name)
+            done.append(f"{name}: harness work cleared, files kept")
+    return done
 
 
 def generated_from(drive_name: str) -> tuple[str, int] | None:
@@ -193,6 +208,11 @@ class JobRunner:
 
         threading.Thread(target=work, daemon=True).start()
         return True
+
+    def clear_history(self) -> None:
+        with self.lock:
+            if self.current is None:
+                self.history.clear()
 
     def last_finished_id(self) -> int:
         return self.history[0].id if self.history else 0

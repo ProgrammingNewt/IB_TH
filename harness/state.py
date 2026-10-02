@@ -13,6 +13,8 @@ class RunState:
     budget: int = 25
     tool_calls: int = 0
     history: list[dict] = field(default_factory=list)
+    # Terms the requester named that aren't in the files: slot -> {"asked", "known"}.
+    ungrounded: dict = field(default_factory=dict)
 
     def missing_slots(self) -> list[str]:
         return [s for s in REQUIRED_SLOTS if not self.goal.get(s)]

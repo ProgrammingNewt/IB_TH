@@ -56,6 +56,12 @@ def check(name: str, args: dict, drive: Drive, state: RunState,
             ids = ", ".join(c["id"] for c in open_items)
             return Decision(False, f"{name} is blocked until these are answered by their owners: {ids}")
     if name == "run_stats":
+        if state.ungrounded:
+            named = "; ".join(f"{slot} {v['asked']!r} (the files have {', '.join(v['known'])})"
+                              for slot, v in state.ungrounded.items())
+            return Decision(False, f"run_stats is blocked: the requester named things that aren't "
+                                   f"in the files: {named}. Ask the requester about each "
+                                   f"(about='slot:<name>'). Never substitute one yourself")
         missing = state.missing_slots()
         if missing:
             return Decision(False, f"run_stats is blocked: the goal is missing {missing}. "

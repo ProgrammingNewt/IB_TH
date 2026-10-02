@@ -165,8 +165,8 @@ class Harness:
             compound = routed["slots"].get("compound")
             self._say(pid, "understood", about=f" of {compound}" if compound else "")
             goal = {"id": self._new_id("goals", "g"), "requester": sender, "question": text,
-                    "slots": routed["slots"], "status": "open", "runs": [], "history": [],
-                    "created": _now()}
+                    "slots": dict(routed["slots"]), "asked_slots": dict(routed["slots"]),
+                    "status": "open", "runs": [], "history": [], "created": _now()}
             self._save("goals", goal)
             t = self._load("progress", pid)
             t["goal"] = goal["id"]
@@ -261,6 +261,8 @@ class Harness:
                     return {"recorded_as": "nothing", "reason": "couldn't parse the answer"}
             goal = self._load("goals", q["goal_id"])
             goal["slots"][ref] = value
+            goal.get("ungrounded", {}).pop(ref, None)
+            goal.setdefault("confirmed_slots", []).append(ref)   # the requester's word stands
             self._save("goals", goal)
             fact = self.drive.add_fact({"goal": goal["id"], "slot": ref, "value": value,
                                         "statement": f"{ref}: {_slot_text(ref, value)}",
@@ -352,13 +354,15 @@ class Harness:
         goal = self._load("goals", run["goal_id"])
         self.gw.tokens_used = run.get("tokens_used", 0)     # each run has its own token budget
         self.gw.tracer = jsonl_tracer(self.drive.path(f"trace/{run['id']}.jsonl"))
-        state = RunState(goal=goal["slots"], budget=self.tool_budget, tool_calls=run["tool_calls"])
+        state = RunState(goal=goal["slots"], budget=self.tool_budget, tool_calls=run["tool_calls"],
+                         ungrounded=goal.get("ungrounded", {}))
         pid = run.get("progress_id")
 
         def on_tool(name: str, args: dict, result: dict) -> None:
             if result.get("ok"):
                 self._say(pid, name, path=args.get("path", ""), name=args.get("name", ""))
             self._after_tool(run, goal, name, args, result)
+            state.ungrounded = goal.get("ungrounded", {})
             self._trace(run, {"event": "tool", "tool": name, "args": args, "ok": result.get("ok"),
                               "blocked": result.get("blocked"), "error": result.get("error")})
 
@@ -409,38 +413,74 @@ class Harness:
             parts.append(f"{self._person(q['to'])['name']} on {what}")
         return ", ".join(parts)
 
-    def _data_compounds(self) -> list[str]:
-        """Compounds that appear in the parsed readings and the protocol."""
-        found = []
+    def _known_values(self) -> dict[str, list[str]]:
+        """What the files say for each goal slot: compounds in the readings and protocol,
+        the protocol's readout, and the comparisons the data and protocol support."""
+        conditions = []
         readings = self.drive.path("derived/clean_readings.csv")
         if readings.exists():
             import pandas as pd
-            found += [c for c in pd.read_csv(readings).condition.unique() if c != "vehicle"]
+            conditions = list(pd.read_csv(readings).condition.unique())
         protocol = self.drive.read_json(files.PROTOCOL, {}) or {}
-        if protocol.get("compound"):
-            found.append(protocol["compound"])
-        return sorted(set(found))
+        # What's in the data comes first: the protocol's wording is only used when the data
+        # has nothing for that slot, so the options aren't the same thing phrased three ways.
+        in_data = {"compound": [c for c in conditions if c != "vehicle"],
+                   "comparator": [c for c in conditions if c == "vehicle"], "readout": []}
+        in_protocol = {"compound": [protocol.get("compound")], "readout": [protocol.get("readout")],
+                       "comparator": [protocol.get("comparator"), protocol.get("control")]}
+        known = {}
+        for slot in ("compound", "readout", "comparator"):
+            values = sorted({v for v in in_data[slot] if v}) or sorted({v for v in in_protocol[slot] if v})
+            known[slot] = values
+        return known
 
-    def _check_compound(self, run: dict, goal: dict, result: dict) -> None:
-        """Compare the compound the requester asked about with the ones in the files.
+    def _match_terms(self) -> dict[str, list[str]]:
+        """Every name the files use for each slot, data and protocol, for matching what the
+        requester wrote. Wider than `_known_values`, which is what's offered as options."""
+        conditions = []
+        readings = self.drive.path("derived/clean_readings.csv")
+        if readings.exists():
+            import pandas as pd
+            conditions = list(pd.read_csv(readings).condition.unique())
+        protocol = self.drive.read_json(files.PROTOCOL, {}) or {}
+        terms = {"compound": [c for c in conditions if c != "vehicle"] + [protocol.get("compound")],
+                 "readout": [protocol.get("readout")],
+                 "comparator": [c for c in conditions if c == "vehicle"] +
+                               [protocol.get("comparator"), protocol.get("control")]}
+        return {k: [v for v in vals if v] for k, vals in terms.items()}
 
-        Same name written differently ("abc 12") is read as the data's name. A compound that
-        isn't in the files at all is flagged to the Planner, which must ask the requester."""
-        asked = goal["slots"].get("compound")
-        known = self._data_compounds()
-        if not asked or not known or asked in known:
-            return
-        same = [k for k in known if _norm(k) == _norm(asked)]
-        if same:
-            goal["slots"]["compound"] = same[0]
-            self._save("goals", goal)
-            self._say(run.get("progress_id"), "compound_read_as", asked=asked, name=same[0])
-            result["goal_check"] = (f"The requester wrote {asked!r}; that's {same[0]} in the data, "
-                                    f"so the goal now says {same[0]}.")
-            return
-        result["goal_check"] = (f"The requester asked about {asked!r}, but the files only have "
-                                f"{', '.join(known)}. Ask the requester which compound they mean "
-                                f"(about='slot:compound') before analysing. Don't substitute one.")
+    def _ground_slots(self, run: dict, goal: dict, result: dict) -> None:
+        """Check every term the requester named against the files.
+
+        A term the files contain is kept. The same term written differently ("abc 12",
+        "ABC12") is read as the files' name, and the reply says so. Anything else is
+        ungrounded: the Planner is told to ask, and run_stats stays blocked until the
+        requester answers. Nothing is substituted."""
+        known, terms = self._known_values(), self._match_terms()
+        notes = []
+        goal["ungrounded"] = {}
+        for slot in goal.get("asked_slots", {}):
+            asked = goal["slots"].get(slot)
+            options, names = known.get(slot) or [], terms.get(slot) or []
+            if not asked or not names or asked in names or slot in goal.get("confirmed_slots", []):
+                continue
+            same = [o for o in names if _norm(o) == _norm(asked)]
+            if not same and slot != "compound":
+                # "SA-beta-gal" is the readout "SA-beta-gal fluorescence (C12FDG)"; "DMSO" is the
+                # control "0.1% DMSO". A compound must match exactly: "ABC" isn't "ABC-12".
+                same = [o for o in names if _norm(asked) in _norm(o) or _norm(o) in _norm(asked)]
+            if same:
+                goal["slots"][slot] = same[0]
+                self._say(run.get("progress_id"), "slot_read_as", asked=asked, name=same[0], slot=slot)
+                notes.append(f"The requester wrote {asked!r} for the {slot}; the files call it {same[0]}.")
+            else:
+                goal["ungrounded"][slot] = {"asked": asked, "known": options}
+                notes.append(f"The requester named the {slot} {asked!r}, but the files only have "
+                             f"{', '.join(options)}. Ask the requester which they mean "
+                             f"(about='slot:{slot}') before analysing. Don't substitute one.")
+        self._save("goals", goal)
+        if notes:
+            result["goal_check"] = " ".join(notes)
 
     def _after_tool(self, run: dict, goal: dict, name: str, args: dict, result: dict) -> None:
         if args.get("path") and self.drive.owner_of(args["path"]):
@@ -451,7 +491,7 @@ class Harness:
         if not result.get("ok"):
             return
         if name in ("parse_xlsx", "extract_protocol_fields"):
-            self._check_compound(run, goal, result)
+            self._ground_slots(run, goal, result)
         if name == "extract_protocol_fields":
             # The protocol fills the slots it states, so they're never asked for.
             for slot in ("compound", "readout", "comparator"):
@@ -494,7 +534,19 @@ class Harness:
 
     def _create_questions(self, run: dict, goal: dict, args: dict) -> tuple[list[str], list[str]]:
         created, errors = [], []
-        for item in args.get("questions") or []:
+        items = args.get("questions") or []
+        pending_terms = set(goal.get("ungrounded", {}))
+        if pending_terms:
+            # First settle what the requester meant; other questions would be phrased around
+            # terms that may be about to change. They're asked once these are answered.
+            held = [i for i in items if str(i.get("about", "")).partition(":")[2] not in pending_terms]
+            items = [i for i in items if str(i.get("about", "")).partition(":")[2] in pending_terms]
+            if held:
+                errors.append("held back until the requester confirms what they meant by: "
+                              f"{', '.join(sorted(pending_terms))}. Ask the rest after that")
+            for slot in sorted(pending_terms - {str(i.get('about', '')).partition(':')[2] for i in items}):
+                items.append({"about": f"slot:{slot}", "text": ""})   # ask even if the Planner didn't
+        for item in items:
             about, text = str(item.get("about", "")), str(item.get("text", "")).strip()
             kind, _, ref = about.partition(":")
             if kind == "contradiction":
@@ -511,16 +563,14 @@ class Harness:
                     run, goal, to=c["decides"], cc=[o for o in c["owners"] if o != c["decides"]],
                     about=about, text=text or f"Plate {c['plate_id']} in {c['file']}: {issues}. What should we do?",
                     choices=[{"key": k, "label": v} for k, v in c["choices"].items()])
-            elif kind == "slot" and ref == "compound":
-                # The options are the compounds actually in the files, not the Planner's guesses.
-                asked = goal["slots"].get("compound")
-                choices = [{"key": f"c{i + 1}", "label": k, "value": k}
-                           for i, k in enumerate(self._data_compounds())]
+            elif kind == "slot" and ref in goal.get("ungrounded", {}):
+                # The options are what the files contain, not the Planner's guesses.
+                u = goal["ungrounded"][ref]
+                choices = [{"key": f"c{i + 1}", "label": k, "value": k} for i, k in enumerate(u["known"])]
                 choices.append({"key": "other", "label": "Something else (type it)", "value": None})
                 q = self._new_question(run, goal, to=goal["requester"], cc=[], about=about,
-                                       text=text or f"You asked about {asked!r}, but the files only "
-                                                    f"have {', '.join(c['label'] for c in choices[:-1])}. "
-                                                    "Which compound did you mean?",
+                                       text=text or f"You named the {ref} {u['asked']!r}, but the files "
+                                                    f"only have {', '.join(u['known'])}. Which did you mean?",
                                        choices=choices)
             elif kind == "slot" and ref in REQUIRED_SLOTS:
                 choices = [c for c in item.get("choices") or [] if _valid_slot(ref, c.get("value"))]
