@@ -63,16 +63,7 @@ python -m evals.runner evals/cases/core.json --out runs/evals/core  # live evals
 
 ## How it works
 
-```
- scientists ──► Router ──► Planner ◄──── answers ──── scientists
-                  │          │  ▲
-                  │          │  └── review failed ──┐
-                  │          ├── asks ──► Q&A writes the questions, run pauses
-                  │          └── submits ──► Reviewer ┘
-                  │                            │
-                  └──► Q&A (questions          pass ──► findings + Q&A report
-                       about the analysis)
-```
+![Architecture](docs/architecture.png)
 
 Four agents, each one LLM with one job and its own loop:
 
