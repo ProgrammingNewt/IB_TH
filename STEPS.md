@@ -89,6 +89,15 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Tests: `tests/test_ui.py` renders both pages as every scientist with no exceptions, and checks the job runner. 45 tests pass. The server boots and serves the page
 - [ ] You: click through the demo in a browser (steps in the README). The live clicks haven't been tested headless, because they make real model calls
 
+### 5b. Removing files, and any file type
+- [x] Remove a team file (Drive tab, "Your files"): only its owner, with an inline confirmation. The file moves to `trash/` and is logged in the manifest. Rows, facts and open contradictions derived from it are dropped. Findings get an "out of date" banner with a Re-evaluate button; no run starts by itself
+- [x] Upload any file type. Same name: only its owner can replace it (old version to trash). Checkbox to upload without re-running
+- [x] New tools: `read_table` (.csv, .tsv, any .xlsx) and `read_document` (.pdf, .docx, .txt, .md, .json, .py…). Files nothing can read (e.g. images) fail with a clear reason, and the Planner is told not to guess
+- [x] Previews for the new types in the Drive tab (tables, Word text, images, code)
+- [x] Findings list every team file the analysis didn't read, with the reason, from code
+- [x] Live check: with a meeting-notes .txt and a .png on the drive, the Planner read the notes with `read_document` on its own and still reached the right verdict. It skipped the image without saying so, which is why the "Files not used" section is built in code
+- [x] Headless click-through: Ben removes `readings.xlsx`, it lands in trash, and the out-of-date banner appears. 51 tests pass
+
 ## 6. Evals
 - [ ] `planted_batch_issue/`: asked the right people, correct stats, no causal wording, re-run plan with vehicle on the plate
 - [ ] `clean/`: no questions to owners, agrees with the notebook

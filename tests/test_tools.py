@@ -170,4 +170,4 @@ def test_search_sops_and_skills(make_drive):
 
 def test_tool_list_for_the_planner():
     names = [t["function"]["name"] for t in openai_tools()]
-    assert len(names) == len(set(names)) == 10
+    assert len(names) == len(set(names)) == 12

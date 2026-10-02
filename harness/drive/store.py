@@ -52,17 +52,75 @@ class Drive:
     def owner_of(self, rel: str) -> str | None:
         return next((f["owner"] for f in self.manifest["files"] if f["path"] == rel), None)
 
-    def upload(self, src: str | Path, owner: str, description: str) -> str:
-        """Add a scientist's file to raw/ and the manifest. Returns its drive path."""
+    def upload(self, src: str | Path, owner: str, description: str, replace: bool = False) -> str:
+        """Add a scientist's file to raw/ and the manifest. Any file type. Returns its path.
+
+        A file with the same name can only be replaced by its owner, with `replace=True`;
+        the old version goes to trash/."""
         src = Path(src)
         rel = f"raw/{src.name}"
-        if self.owner_of(rel):
-            raise DriveError(f"{rel} already exists")
+        current = self.owner_of(rel)
+        if current is not None:
+            if not replace:
+                raise DriveError(f"{rel} already exists. Replace it, or rename the file")
+            self.remove(rel, by=owner)               # checks ownership
         shutil.copy2(src, self.path(rel))
         self.manifest["files"].append({"path": rel, "owner": owner, "description": description,
                                        "modified": dt.date.today().isoformat()})
         self._save_manifest()
         return rel
+
+    def remove(self, rel: str, by: str) -> dict:
+        """Move a file to trash/. Only its owner can. Data derived from it is cleaned up:
+        its rows leave the parsed readings, facts read from it are dropped, and open
+        contradictions about it are withdrawn. Returns what was changed."""
+        owner = self.owner_of(rel)
+        if owner is None:
+            raise DriveError(f"{rel} is not in the drive")
+        if by != owner:
+            raise DriveError(f"{rel} is owned by {owner}, so only they can remove it")
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
+        trash = f"trash/{stamp}-{Path(rel).name}"
+        self.path("trash").mkdir(exist_ok=True)
+        shutil.move(self.path(rel), self.path(trash))
+        self.manifest["files"] = [f for f in self.manifest["files"] if f["path"] != rel]
+        self.manifest.setdefault("removed", []).append(
+            {"path": rel, "owner": owner, "by": by, "at": _now(), "trash": trash})
+        self._save_manifest()
+        return {"removed": rel, "trash": trash, "cleaned": self._forget(rel)}
+
+    def _forget(self, rel: str) -> list[str]:
+        """Drop everything the harness derived from `rel`."""
+        import pandas as pd
+
+        cleaned = []
+        readings = self.path("derived/clean_readings.csv")
+        if readings.exists():
+            df = pd.read_csv(readings)
+            if (df.source_file == rel).any():
+                df = df[df.source_file != rel]
+                self.write_artifact("derived/clean_readings.csv", lambda p: df.to_csv(p, index=False),
+                                    tool="remove_file", inputs=sorted(df.source_file.unique()))
+                cleaned.append("derived/clean_readings.csv")
+        meta = self.read_json("facts/run_metadata.json", None)
+        if meta and any(m["source_file"] == rel for m in meta):
+            self.write_json("facts/run_metadata.json", [m for m in meta if m["source_file"] != rel])
+            cleaned.append("facts/run_metadata.json")
+        for name in ("facts/protocol.json", "facts/notebook_claims.json"):
+            data = self.read_json(name, None)
+            if isinstance(data, dict) and data.get("source_file") == rel:
+                self.path(name).unlink()
+                cleaned.append(name)
+        items = self.contradictions()
+        changed = False
+        for c in items:
+            if c["file"] == rel and c["status"] == "open":
+                c.update(status="withdrawn", note=f"{rel} was removed")
+                changed = True
+        if changed:
+            self.write_json(CONTRADICTIONS, items)
+            cleaned.append(CONTRADICTIONS)
+        return cleaned
 
     def _save_manifest(self) -> None:
         (self.root / "manifest.json").write_text(json.dumps(self.manifest, indent=2))

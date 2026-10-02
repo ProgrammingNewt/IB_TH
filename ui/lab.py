@@ -11,6 +11,7 @@ from pypdf import PdfReader
 
 import common as c
 from harness.drive.store import Drive
+from harness.tools import files as files_tools
 
 c.ensure_default_drives()
 runner = c.jobs()
@@ -161,41 +162,70 @@ with tab_q:
 
 # ---- Drive ------------------------------------------------------------------------------
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
 def preview(rel: str) -> None:
     p = drive.path(rel)
     if not p.exists():
         st.caption("Not created yet.")
         return
-    if p.suffix == ".xlsx":
-        sheets = pd.read_excel(p, sheet_name=None)
-        if "readings" in sheets:
-            st.altair_chart(c.readings_chart(sheets["readings"]))
-        for name, df in sheets.items():
-            st.caption(f"Sheet: {name}")
-            st.dataframe(df, hide_index=True, width="stretch", height=min(400, 35 * (len(df) + 1)))
-    elif p.suffix == ".pdf":
-        st.text("\n".join(page.extract_text() or "" for page in PdfReader(p).pages))
-    elif p.suffix == ".ipynb":
-        for cell in nbformat.read(p, as_version=4).cells:
-            if cell.cell_type == "markdown":
-                st.markdown(cell.source)
-            else:
-                st.code(cell.source, language="python")
-                out = "".join(o.get("text", "") for o in cell.get("outputs", []))
-                if out.strip():
-                    st.text(out)
-    elif p.suffix == ".md":
-        st.markdown(p.read_text())
-    elif p.suffix == ".csv":
-        st.dataframe(pd.read_csv(p), hide_index=True, width="stretch")
-    elif p.suffix == ".json":
-        st.json(json.loads(p.read_text()), expanded=2)
-    else:
-        st.text(p.read_text()[:5000])
+    suffix = p.suffix.lower()
+    try:
+        if suffix == ".xlsx":
+            sheets = pd.read_excel(p, sheet_name=None)
+            if "readings" in sheets:
+                st.altair_chart(c.readings_chart(sheets["readings"]))
+            for name, df in sheets.items():
+                st.caption(f"Sheet: {name}")
+                st.dataframe(df, hide_index=True, width="stretch", height=min(400, 35 * (len(df) + 1)))
+        elif suffix == ".pdf":
+            st.text("\n".join(page.extract_text() or "" for page in PdfReader(p).pages))
+        elif suffix == ".docx":
+            st.text(files_tools._docx_text(p))
+        elif suffix == ".ipynb":
+            for cell in nbformat.read(p, as_version=4).cells:
+                if cell.cell_type == "markdown":
+                    st.markdown(cell.source)
+                else:
+                    st.code(cell.source, language="python")
+                    out = "".join(o.get("text", "") for o in cell.get("outputs", []))
+                    if out.strip():
+                        st.text(out)
+        elif suffix == ".md":
+            st.markdown(p.read_text())
+        elif suffix in (".csv", ".tsv"):
+            st.dataframe(pd.read_csv(p, sep="\t" if suffix == ".tsv" else ","), hide_index=True, width="stretch")
+        elif suffix == ".json":
+            st.json(json.loads(p.read_text()), expanded=2)
+        elif suffix in IMAGE_SUFFIXES:
+            st.image(str(p))
+            st.caption("The harness can store images but can't read them.")
+        elif suffix in files_tools.TEXT_SUFFIXES:
+            st.text(p.read_text(errors="replace")[:5000])
+        else:
+            st.caption(f"No preview for {suffix or 'this'} files ({p.stat().st_size:,} bytes). "
+                       "The harness keeps it but can't read it.")
+    except Exception as exc:                                        # noqa: BLE001
+        st.warning(f"Couldn't preview {rel}: {exc}")
     lineage = drive.path(rel + ".lineage.json")
     if lineage.exists():
         st.caption("Lineage")
         st.json(json.loads(lineage.read_text()), expanded=True)
+
+
+def remove_now(rel: str) -> None:
+    if runner.busy():
+        st.error("The harness is busy. Try again when the current job finishes.")
+        return
+    try:
+        c.harness_for(drive_name, refuse).remove(rel, me)
+    except Exception as exc:                                        # noqa: BLE001
+        st.error(str(exc))
+        return
+    st.session_state.pop("confirm_remove", None)
+    st.toast(f"Moved {rel} to trash")
+    st.rerun()
 
 
 with tab_drive:
@@ -204,21 +234,57 @@ with tab_drive:
     st.dataframe(pd.DataFrame([{"file": f["path"], "owner": people.get(f["owner"], {}).get("name", f["owner"]),
                                 "modified": f["modified"], "description": f["description"]} for f in files]),
                  hide_index=True, width="stretch")
+
+    mine = [f for f in files if f["owner"] == me]
+    if mine:
+        st.caption("Your files (only a file's owner can remove it)")
+        for f in mine:
+            col1, col2 = st.columns([5, 1])
+            col1.markdown(f"`{f['path']}` · {f['description']}")
+            if col2.button("Remove", key=f"rm-{f['path']}", width="stretch"):
+                st.session_state["confirm_remove"] = f["path"]
+            if st.session_state.get("confirm_remove") == f["path"]:
+                with st.container(border=True):
+                    st.write(f"Move **{f['path']}** to the drive's trash?")
+                    st.caption("Data the harness read from it is dropped, any open question about it "
+                               "is withdrawn, and findings that used it are marked out of date. It can "
+                               "be restored from trash/.")
+                    yes, no = st.columns(2)
+                    if yes.button("Yes, move it to trash", key=f"rm-yes-{f['path']}", type="primary"):
+                        remove_now(f["path"])
+                    if no.button("Cancel", key=f"rm-no-{f['path']}"):
+                        st.session_state.pop("confirm_remove", None)
+                        st.rerun()
+
     derived = sorted(str(p.relative_to(drive.root)) for folder in ("facts", "derived")
                      if drive.path(folder).exists() for p in drive.path(folder).glob("*")
                      if not p.name.endswith(".lineage.json"))
     choice = st.selectbox("Open a file", [f["path"] for f in files] + derived,
                           format_func=lambda r: r + ("  (made by the harness)" if r in derived else ""))
-    preview(choice)
+    if choice:
+        preview(choice)
 
     st.subheader("Upload a file")
-    up = st.file_uploader("Readings workbook (.xlsx)", type=["xlsx"])
-    desc = st.text_input("Description", placeholder="Re-run at 72 h with vehicle on the plate")
-    if up and st.button("Upload", type="primary"):
-        tmp = Path(tempfile.mkdtemp()) / up.name
-        tmp.write_bytes(up.getvalue())
-        submit(f"{person['name']} uploads {up.name}",
-               lambda hh, who, tmp=tmp, d=(desc or up.name): hh.upload(tmp, who, d))
+    st.caption("Any file type. Tables (.xlsx, .csv, .tsv), documents (.pdf, .docx, .txt, .md…), "
+               "notebooks and code are read by the harness. Other files, such as images, are kept "
+               "but not read.")
+    up = st.file_uploader("File", type=None)
+    desc = st.text_input("Description", placeholder="What is this file? The Planner reads this")
+    rerun = st.checkbox("Re-run the analysis with this file", value=True,
+                        help="Starts a new run for every goal that already has one.")
+    if up:
+        existing = drive.owner_of(f"raw/{up.name}")
+        replace = False
+        if existing and existing != me:
+            st.error(f"raw/{up.name} belongs to {people[existing]['name']}. Rename your file to upload it.")
+        elif existing == me:
+            replace = st.checkbox(f"Replace my existing raw/{up.name} (the old one goes to trash)")
+        if st.button("Upload", type="primary", disabled=bool(existing) and not replace):
+            tmp = Path(tempfile.mkdtemp()) / up.name
+            tmp.write_bytes(up.getvalue())
+            submit(f"{person['name']} uploads {up.name}",
+                   lambda hh, who, tmp=tmp, d=(desc or up.name), r=replace, ev=rerun:
+                   hh.upload(tmp, who, d, replace=r, reevaluate=ev))
     for f in c.incoming_files(drive_name):
         if not drive.owner_of(f"raw/{f.name}"):
             if st.button(f"Upload the demo file {f.name} as {person['name']}", key=f"demo-{f.name}"):
@@ -232,6 +298,13 @@ with tab_findings:
     if not findings.exists():
         st.caption("No findings yet.")
     else:
+        stale = [x for g in h.goals() for x in g.get("stale", [])]
+        if stale:
+            st.warning("**These findings may be out of date.** Since they were written:\n\n" +
+                       "\n".join(f"- {x['change']}" for x in stale))
+            if st.button("Re-evaluate with the files as they are now", type="primary"):
+                changes = "; ".join(x["change"] for x in stale)
+                submit("Re-evaluate", lambda hh, who, ch=changes: hh.reevaluate(f"Files changed: {ch}."))
         st.markdown(findings.read_text())
         plans = sorted(p for p in drive.path("findings/plans").glob("*.json")
                        if not p.name.endswith(".lineage.json")) if drive.path("findings/plans").exists() else []

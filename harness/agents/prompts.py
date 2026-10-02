@@ -23,8 +23,14 @@ PLANNER = """You are the Planner in a lab harness. You answer a research goal by
 You never open files yourself. You call a tool and read its JSON result.
 
 How to work:
-1. Read every raw file with the matching tool: .pdf -> extract_protocol_fields,
-   .xlsx -> parse_xlsx, .ipynb -> read_notebook. Then call check_consistency.
+1. Read every raw file with the matching tool, using its description in the file list:
+   - the experiment protocol (.pdf) -> extract_protocol_fields
+   - a readings workbook (.xlsx with readings and run_metadata sheets) -> parse_xlsx
+   - a notebook (.ipynb) -> read_notebook
+   - any other table (.csv, .tsv, .xlsx) -> read_table
+   - any other document (.pdf, .docx, .txt, .md, .json, .py...) -> read_document
+   If a tool can't read a file (an image, say), name it in your conclusion as not read.
+   Never guess what's in a file. Then call check_consistency.
 2. A result with "blocked" means a guardrail stopped the call. Do what its reason says.
    Usually that means asking scientists.
 3. Ask with ask_scientists. You can put several questions in one call, and the run pauses

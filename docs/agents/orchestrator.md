@@ -18,8 +18,17 @@ answer(question, by, choice, text?):
     plan approval → only the requester; marks the plan approved or rejected
     then: if every question the run is waiting on is answered, resume the run
 
-upload(file, owner):
-    add it to the drive, then start a new run for every goal that already has one
+upload(file, owner, replace?, reevaluate?):
+    any file type. Same name: only its owner can replace it (the old one goes to trash/)
+    by default, start a new run for every goal that already has one;
+    otherwise mark those goals' findings out of date
+
+remove(file, by):
+    only the file's owner. The file moves to trash/; rows, facts and open contradictions
+    derived from it are dropped; findings are marked out of date. No run starts.
+
+reevaluate(reason):
+    start a new run for every goal that already has one (the UI's "Re-evaluate" button)
 ```
 
 ## Driving a run
@@ -50,6 +59,7 @@ loop(run):
 ## After each tool (hooks the Planner reports to)
 - `extract_protocol_fields`: the protocol's compound, readout and comparator fill any empty goal slots, so they're never asked.
 - `plan_followup_plate`: the plan is linked to the goal, and an approval question goes to the requester.
+- Any tool with a `path`: the goal records whether that team file was read. Findings list every team file that wasn't, with the reason, whatever the Planner wrote.
 
 ## State in the drive
 `goals/`, `runs/` (each run's whole conversation, so it can resume), `questions/`, `messages/` (inboxes), `trace/` (every model and tool call), `findings/`.

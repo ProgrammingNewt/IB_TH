@@ -42,6 +42,18 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Re-run a notebook on a copy of its data and check it reproduces.",
         "parameters": _obj({"path": _path}, ["path"]),
     },
+    "read_table": {
+        "fn": files.read_table,
+        "description": "Columns and first rows of any .csv, .tsv or .xlsx file that isn't a "
+                       "readings workbook.",
+        "parameters": _obj({"path": _path}, ["path"]),
+    },
+    "read_document": {
+        "fn": files.read_document,
+        "description": "Text of any other document: .pdf, .docx, .txt, .md, .json, .py and "
+                       "similar. Fails on files it can't read, such as images.",
+        "parameters": _obj({"path": _path}, ["path"]),
+    },
     "check_consistency": {
         "fn": analysis.check_consistency,
         "description": "Compare every plate's run metadata and wells with the protocol. "

@@ -164,3 +164,67 @@ def run_notebook(drive: Drive, path: str) -> dict:
     drive.write_artifact(rel, lambda p: p.write_text(json.dumps(result, indent=2)),
                          tool="run_notebook", inputs=[path])
     return result | {"wrote": [rel]}
+
+
+# ---- any other file ----------------------------------------------------------------
+
+TEXT_SUFFIXES = {".txt", ".md", ".csv", ".tsv", ".json", ".py", ".r", ".yaml", ".yml", ".log",
+                 ".html", ".xml", ".fasta", ".fa", ".gb", ".sdf", ".mol"}
+TABLE_SUFFIXES = {".csv", ".tsv", ".xlsx"}
+MAX_CHARS = 6000
+TABLE_ROWS = 20
+
+
+def _in_manifest(drive: Drive, path: str) -> Path:
+    if drive.owner_of(path) is None:
+        raise ToolError(f"{path} is not in the drive manifest")
+    return drive.path(path)
+
+
+def _docx_text(p: Path) -> str:
+    """Text from a .docx without extra dependencies: paragraphs from word/document.xml."""
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(p) as z:
+        root = ET.fromstring(z.read("word/document.xml"))
+    return "\n".join("".join(t.text or "" for t in para.iter(f"{ns}t"))
+                     for para in root.iter(f"{ns}p"))
+
+
+def read_document(drive: Drive, path: str) -> dict:
+    """Text from a document: PDF, Word (.docx), or any plain-text file. Long files are cut
+    to the first 6,000 characters, and the result says so."""
+    p = _in_manifest(drive, path)
+    suffix = p.suffix.lower()
+    if suffix == ".pdf":
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(p).pages)
+    elif suffix == ".docx":
+        text = _docx_text(p)
+    elif suffix == ".ipynb":
+        raise ToolError(f"{path} is a notebook. Use read_notebook")
+    elif suffix in TEXT_SUFFIXES:
+        text = p.read_text(errors="replace")
+    else:
+        raise ToolError(f"the harness can't read {suffix or 'this'} files. {path} is "
+                        f"{p.stat().st_size:,} bytes. Say it wasn't read; don't guess its content")
+    return {"file": path, "owner": drive.owner_of(path), "chars": len(text),
+            "truncated": len(text) > MAX_CHARS, "text": text[:MAX_CHARS]}
+
+
+def read_table(drive: Drive, path: str) -> dict:
+    """Columns and the first 20 rows of each table in a .csv, .tsv or .xlsx file."""
+    p = _in_manifest(drive, path)
+    suffix = p.suffix.lower()
+    if suffix not in TABLE_SUFFIXES:
+        raise ToolError(f"read_table reads {sorted(TABLE_SUFFIXES)}, not {suffix}")
+    if suffix == ".xlsx":
+        tables = pd.read_excel(p, sheet_name=None)
+    else:
+        tables = {p.stem: pd.read_csv(p, sep="\t" if suffix == ".tsv" else ",")}
+    out = []
+    for name, df in tables.items():
+        out.append({"table": name, "rows": len(df), "columns": [str(c) for c in df.columns],
+                    "head": json.loads(df.head(TABLE_ROWS).to_json(orient="records", default_handler=str))})
+    return {"file": path, "owner": drive.owner_of(path), "tables": out}

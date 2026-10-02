@@ -12,7 +12,7 @@
 ## Loop
 
 ```
-tools = the 10 drive tools + ask_scientists + submit_conclusion
+tools = the 12 drive tools + ask_scientists + submit_conclusion
 
 while turns < 40:
     reply = model(conversation, tools)

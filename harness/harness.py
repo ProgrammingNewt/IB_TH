@@ -118,16 +118,41 @@ class Harness:
         return {"intent": "new_analysis", "goal": goal["id"],
                 **self._start_run(goal, f"{self._person(sender)['name']} asked: {text}")}
 
-    def upload(self, src, owner: str, description: str) -> dict:
-        """A scientist added a file. Every goal that already has a run is re-evaluated."""
-        rel = self.drive.upload(src, owner, description)
+    def upload(self, src, owner: str, description: str, replace: bool = False,
+               reevaluate: bool = True) -> dict:
+        """A scientist added (or replaced) a file. Any file type. By default every goal that
+        already has a run is re-evaluated with it."""
+        rel = self.drive.upload(src, owner, description, replace=replace)
+        what = "replaced" if replace else "uploaded"
+        if not reevaluate:
+            self._mark_stale(f"{rel} {what} by {self._person(owner)['name']}")
+            return {"uploaded": rel, "runs": []}
+        return {"uploaded": rel, "runs": self.reevaluate(
+            f"File {what} by {self._person(owner)['name']}: {rel}.")}
+
+    def remove(self, rel: str, by: str) -> dict:
+        """The file's owner removed it. It goes to trash/, and findings that used it are
+        marked out of date. No run starts: a person decides when to re-evaluate."""
+        result = self.drive.remove(rel, by)
+        self._mark_stale(f"{rel} removed by {self._person(by)['name']}")
+        return result
+
+    def reevaluate(self, reason: str) -> list[dict]:
+        """Start a new run for every goal that already has one."""
         runs = []
         for goal in self.goals():
             if goal["runs"]:
-                runs.append(self._start_run(
-                    goal, f"New file uploaded by {self._person(owner)['name']}: {rel}. "
-                          "Re-evaluate the goal with it. Reuse facts the team already confirmed."))
-        return {"uploaded": rel, "runs": runs}
+                goal["stale"] = []
+                self._save("goals", goal)
+                runs.append(self._start_run(goal, f"{reason} Re-evaluate the goal with the files "
+                                                  "as they are now. Reuse facts the team already confirmed."))
+        return runs
+
+    def _mark_stale(self, change: str) -> None:
+        for goal in self.goals():
+            if goal["status"] == "answered":
+                goal.setdefault("stale", []).append({"change": change, "at": _now()})
+                self._save("goals", goal)
 
     def answer(self, qid: str, by: str, choice: str, text: str | None = None) -> dict:
         """A scientist answered a question, by choice key ("other" with `text` for free text)."""
@@ -247,7 +272,7 @@ class Harness:
         state = RunState(goal=goal["slots"], budget=self.tool_budget, tool_calls=run["tool_calls"])
 
         def on_tool(name: str, args: dict, result: dict) -> None:
-            self._after_tool(run, goal, name, result)
+            self._after_tool(run, goal, name, args, result)
             self._trace(run, {"event": "tool", "tool": name, "args": args, "ok": result.get("ok"),
                               "blocked": result.get("blocked"), "error": result.get("error")})
 
@@ -277,7 +302,12 @@ class Harness:
                                               "revisions_left": self.max_revisions - run["revisions"]})
             self._save_run(run)
 
-    def _after_tool(self, run: dict, goal: dict, name: str, result: dict) -> None:
+    def _after_tool(self, run: dict, goal: dict, name: str, args: dict, result: dict) -> None:
+        if args.get("path") and self.drive.owner_of(args["path"]):
+            # Which team files this goal's analysis actually read, for "Files not used".
+            seen = goal.setdefault("files_read", {})
+            seen[args["path"]] = "read" if result.get("ok") else result.get("error", "not read")
+            self._save("goals", goal)
         if not result.get("ok"):
             return
         if name == "extract_protocol_fields":
@@ -444,6 +474,15 @@ class Harness:
             lines += ["", "## Notes for file owners", ""]
             lines += [f"- {name(n.get('owner'))} on `{n.get('file')}`: {n.get('note')}"
                       for n in d["notes_for_owners"]]
+        unused = []
+        for f in self.drive.files():
+            status = goal.get("files_read", {}).get(f["path"])
+            if f["path"].startswith("sops/") or status == "read":
+                continue
+            unused.append(f"- `{f['path']}` ({name(f['owner'])}): " +
+                          (status if status else "not read in this analysis"))
+        if unused:
+            lines += ["", "## Files not used", ""] + unused
         if goal.get("last_unresolved"):
             lines += ["", "## Review problems not resolved", ""]
             lines += [f"- {p}" for p in goal["last_unresolved"]]
