@@ -197,7 +197,7 @@ class Harness:
                 # One state for any question about an analysis: its findings (if any), what
                 # the run did, the questions and answers, and any plate plan in full.
                 self._say(pid, "looking")
-                reply = self.qa.explain(self._person(sender), text, self.run_state(goal),
+                reply = self.qa.explain(self._person(sender), text, self.run_state(goal, reader=sender),
                                         renamed=_renamed(goal))
                 self._notify(sender, "answer", reply)
                 self._step(pid, reply, state="done", goal=goal["id"])
@@ -249,8 +249,46 @@ class Harness:
             self._say(pid, "failed", state="failed", reason=f"{type(exc).__name__}: {exc}")
             raise
 
-    def run_state(self, goal: dict) -> dict:
-        """What a run has done so far, in plain terms, for the Q&A agent to explain."""
+    def _analysis_so_far(self) -> dict:
+        """Which plates the current result used, and which were excluded, by whom and why."""
+        stats = self.drive.read_json(STATS) or {}
+        contradictions = {c["id"]: c for c in self.drive.contradictions()}
+        excluded = []
+        for f in self.drive.facts():
+            plate = (f.get("action") or {}).get("exclude_plate")
+            if not plate:
+                continue
+            c = contradictions.get(f.get("resolves"), {})
+            why = "; ".join(f"{i['field']} was {i['data_value']} (protocol: {i['protocol_value']})"
+                            for i in c.get("issues", []))
+            excluded.append({"plate": plate, "file": f["scope"]["file"], "batch": f["scope"]["batch"],
+                             "decided_by": self._person(f["confirmed_by"])["name"], "why": why})
+        return {
+            "plates_in_current_result": [k.split(":")[1] + f" ({k.split(':')[0]})"
+                                         for k in stats.get("plates_used", [])],
+            "plates_left_out_for_no_vehicle": stats.get("plates_refused_no_vehicle", []),
+            "excluded_by_the_team": excluded,
+            "result": {k: stats.get(k) for k in ("drop", "p", "meets_threshold")} if stats else None,
+        }
+
+    def _plan_purpose(self, meta: dict) -> str:
+        """What a plate plan is for, and what the analysis will use once its data arrive."""
+        so_far = self._analysis_so_far()
+        used = [p.split(" ")[0] for p in so_far["plates_in_current_result"]]
+        out = [x["plate"] for x in so_far["excluded_by_the_team"]] + \
+              [k.split(":")[1] for k in so_far["plates_left_out_for_no_vehicle"]]
+        if meta.get("kind") == "rerun":
+            redo = f"Re-does the work of {', '.join(sorted(set(out)))}, which was left out of the analysis, " \
+                if out else "Repeats the experiment "
+            return (redo + f"properly: {meta.get('treatment_hours', 72)} h, with vehicle on the same plate. "
+                    f"It is not a repeat of {', '.join(used) or 'the analysed plates'}. Once its data are "
+                    f"uploaded, the analysis will use {' and '.join(used + ['the new plate']) if used else 'the new plate'}"
+                    + (f"; {', '.join(sorted(set(out)))} stays excluded." if out else "."))
+        return (f"Measures how potent {meta.get('compound')} is across 10 doses, after the result met the "
+                "threshold. It doesn't change the current result.")
+
+    def run_state(self, goal: dict, reader: str | None = None) -> dict:
+        """What an analysis has done so far, in plain terms, for the Q&A agent to explain."""
         plans = []
         folder = self.drive.path("findings/plans")
         for meta_path in sorted(folder.glob("*.json")) if folder.exists() else []:
@@ -263,18 +301,22 @@ class Harness:
             layout = pd.read_csv(self.drive.path(meta["plan"]))
             wells = layout.groupby(["condition", "conc_uM"]).size().reset_index(name="wells")
             plans.append({**meta, "wells_by_condition": wells.to_dict(orient="records"),
-                          "replaces": "a new plate; it isn't a change to an existing one"})
+                          "purpose": meta.get("purpose") or self._plan_purpose(meta)})
         thread = next((t for t in reversed(self.threads()) if t.get("goal") == goal["id"]), None)
         claims = self.drive.read_json(files.NOTEBOOK_CLAIMS, {}) or {}
         findings = self.drive.path("findings/findings.md")
         return {
+            "reader": {"name": self._person(reader)["name"] if reader else None,
+                       "is_the_requester": reader == goal["requester"]},
             "findings": findings.read_text() if findings.exists() and goal.get("last_run") else None,
             "request": goal["question"],
             "requester": self._person(goal["requester"])["name"],
+            "analysis_so_far": self._analysis_so_far(),
             "confirmed_terms": {k: v for k, v in goal["slots"].items() if k in TERM_SLOTS},
             "threshold": goal["slots"].get("threshold"),
             "progress_so_far": [x["text"] for x in (thread or {}).get("steps", []) if x.get("milestone", True)],
-            "questions": [{"to": self._person(q["to"])["name"], "about": q["about"], "status": q["status"],
+            "questions": [{"to": self._person(q["to"])["name"], "for_the_reader": q["to"] == reader,
+                           "about": q["about"], "status": q["status"],
                            "asked": q["message"], "answer": (q.get("answer") or {}).get("statement")
                            or (q.get("answer") or {}).get("choice")}
                           for q in self.questions() if q["goal_id"] == goal["id"]],
@@ -638,6 +680,7 @@ class Harness:
             meta_rel = result["plan"].replace(".csv", ".json")
             meta = self.drive.read_json(meta_rel)
             meta.update(goal_id=goal["id"], run_id=run["id"], approver=goal["requester"])
+            meta["purpose"] = self._plan_purpose(meta)
             self.drive.write_json(meta_rel, meta)
             q = self._new_question(run, goal, to=goal["requester"], cc=[],
                                    about=f"approval:{result['plan']}",

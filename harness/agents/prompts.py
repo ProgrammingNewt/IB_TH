@@ -94,13 +94,17 @@ words) for each answer choice, in the same order, for the named scientist. Each 
 state the choice's numbers exactly, e.g. a value {"min_drop": 0.3, "max_p": 0.05} becomes
 "At least a 30% drop, p < 0.05". Reply in JSON only: {"labels": ["...", "..."]}"""
 
-QA_EXPLAIN = """You are the Q&A agent in a lab harness. A scientist asked about an analysis
-that's still in progress. Answer from the run state given, and only from it: what has been
-read and found, what is being asked and why, who it's waiting for, and what a proposed
-plate plan contains (count its wells by condition and concentration). Be specific: plates,
-numbers, names. If the state doesn't answer the question, say so and say who could. You
-explain; you never make or change a decision. If they want something changed, tell them
-which open question to answer, or that the requester can say so. 2 to 4 sentences.
+QA_EXPLAIN = """You are the Q&A agent in a lab harness. A scientist asked about an analysis.
+Answer the question they actually asked, directly, in your first sentence; for a yes/no
+question, start with yes or no and the plain fact. Then give the supporting facts from the
+run state, and only from it: which plates the current result uses and which were excluded
+(by whom, and why), what a proposed plate plan is for and which plates the analysis will
+use once its data arrive, what is being asked and who it's waiting for. Be specific with
+plates and numbers.
+Talk to the scientist as "you": if they asked for the analysis, it's "your request"; if a
+question is waiting on them, it's "your approval" or "your answer". Never quote internal
+ids such as f-001, q-002 or c-readings-P2. If the state doesn't answer the question, say
+so and say who could. You explain; you never make or change a decision. 2 to 4 sentences.
 Reply in JSON only: {"message": "..."}"""
 
 QA_ANSWER = """You are the Q&A agent in a lab harness. Answer the scientist's question

@@ -650,3 +650,39 @@ def test_a_pending_approval_keeps_the_analysis_in_progress(setup):
     state = json.loads(client.calls[-1]["messages"][1]["content"])["run_state"]
     assert out["intent"] == "question_about_run"
     assert "Equal arms" in state["plate_plans"][0]["design"]
+
+
+
+def test_qa_gets_what_the_analysis_used_and_what_a_plan_is_for(setup):
+    """With P2 excluded by Ben and stats on P1, the state says so, and the re-run plan says
+    it redoes P2's work and that the analysis will then use P1 and the new plate."""
+    h, client, _, _ = setup
+    from harness.state import RunState
+    from harness.tools.registry import call
+    s = RunState(goal={"compound": "ABC-12", "readout": "x", "comparator": "vehicle", "threshold": THRESHOLD})
+    for t, p in [("extract_protocol_fields", "raw/protocol.pdf"), ("parse_xlsx", "raw/readings.xlsx")]:
+        call(h.drive, s, t, {"path": p})
+    call(h.drive, s, "check_consistency")
+    h.drive.resolve_contradiction("c-readings-P2", "B", "exclude")
+    call(h.drive, s, "filter_dataset")
+    call(h.drive, s, "run_stats", {"compound": "ABC-12", **THRESHOLD})
+    goal, run = _waiting_run_with_plan(h)
+    state = h.run_state(goal, reader="A")
+    so_far = state["analysis_so_far"]
+    assert so_far["plates_in_current_result"] == ["P1 (raw/readings.xlsx)"]
+    assert so_far["excluded_by_the_team"][0]["plate"] == "P2"
+    assert so_far["excluded_by_the_team"][0]["decided_by"] == "Ben Okafor"
+    assert "treatment_hours was 48" in so_far["excluded_by_the_team"][0]["why"]
+    purpose = state["plate_plans"][0]["purpose"]
+    assert purpose.startswith("Re-does the work of P2")
+    assert "not a repeat of P1" in purpose and "will use P1 and the new plate; P2 stays excluded" in purpose
+    assert state["reader"] == {"name": "Ana Ruiz", "is_the_requester": True}
+
+
+def test_qa_may_not_quote_internal_ids(setup):
+    h, client, _, _ = setup
+    client.replies += [say(message="No, P2 was excluded per f-003."),
+                       say(message="No, P2 was excluded by Ben because it ran 48 h.")]
+    out = h.qa.explain(h._person("A"), "is it just P1?", {})
+    assert out == "No, P2 was excluded by Ben because it ran 48 h."
+    assert "Don't quote internal ids like 'f-003'" in client.calls[1]["messages"][-1]["content"]

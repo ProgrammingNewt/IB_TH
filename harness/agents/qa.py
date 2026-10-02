@@ -10,6 +10,7 @@ who receives it.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from harness.gateway.gateway import Gateway, GatewayError
@@ -17,9 +18,17 @@ from . import prompts
 from .base import AgentReplyError, as_user, fix_request, parse_json
 
 
+INTERNAL_ID = re.compile(r"\b(?:[fqgrp]-\d{3}|c-[a-z0-9_]+-[A-Za-z0-9]+)\b")
+
+
 def _message(out: dict) -> str | None:
     m = out.get("message")
-    return None if isinstance(m, str) and m.strip() else "Missing a non-empty \"message\"."
+    if not (isinstance(m, str) and m.strip()):
+        return "Missing a non-empty \"message\"."
+    found = INTERNAL_ID.search(m)
+    if found:
+        return f"Don't quote internal ids like {found.group(0)!r}; say what it is in plain words."
+    return None
 
 
 def _n(text: str) -> str:
