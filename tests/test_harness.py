@@ -145,6 +145,9 @@ def test_run1_pauses_for_two_owners_then_run2_reuses_their_answers(setup):
     assert "## What changed since the last run" in findings
     assert f"Drop vs vehicle: {stats_run1['drop']} → {stats_run2['drop']}" in findings
     assert client.replies == []                       # every scripted reply was used
+    # The Reviewer saw the SOP, so it can check claims that cite it.
+    review_call = next(c for c in client.calls if "Reviewer" in c["messages"][0]["content"])
+    assert "SOP-ASSAY-004" in review_call["messages"][1]["content"]
 
 
 def test_reviewer_sends_a_wrong_number_back(setup):

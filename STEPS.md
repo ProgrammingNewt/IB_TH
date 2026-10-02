@@ -8,7 +8,7 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Create `.venv` and install dependencies
 - [x] First local commit (skeleton + this checklist)
 
-**Now working on:** step 4, agents and the loop.
+**Now working on:** step 5, Streamlit UI.
 
 ## 1. Toy data (first, because the tools are tested against it): done
 - [x] Seeded generator for `planted_batch_issue/`: `protocol.pdf` (A), `readings.xlsx` (B), `analysis.ipynb` (C, executed so it has saved outputs), lab SOP, `manifest.json`
@@ -54,14 +54,24 @@ Action items for the Lab Drive Harness take-home, in order. Tick each box when i
 - [x] Keys added to `.env` (gitignored). `python -m harness.gateway` reports ok for DeepSeek and Cerebras
 - [x] Model names confirmed, and all four models (`deepseek-flash`, `deepseek-v4-pro`, `qwen-3.8-27b`, `gpt-oss-120b`) made a correct `parse_xlsx` tool call
 
-## 4. Agents and the loop
-- [ ] Router: works out what kind of message it is and pulls goal slots from it
-- [ ] Planner: the tool-calling loop, re-planning from each tool's results
-- [ ] Q&A agent: asks named owners with answer choices, delivers reports, answers questions about past findings
-- [ ] Reviewer: checks every claim against evidence, at most 2 revisions
-- [ ] Pause and resume: a run's state is saved to the drive while it waits for an answer
-- [ ] Code renders `findings.md` and the notes from the JSON the Reviewer approved
-- [ ] Run 2: an upload is treated as new data for the open goal, and saved facts are reused
+## 4. Agents and the loop: done
+- [x] Router (`harness/agents/agents.py`): new analysis, question about findings, or other. Never sets the threshold
+- [x] Planner loop (`harness/harness.py`): 10 tools plus `ask_scientists` (pauses the run) and `submit_conclusion` (goes to review)
+- [x] Q&A agent: writes each question for the named person, reports results, answers questions about findings, turns an "other" reply into a value
+- [x] Reviewer: code checks first (every number matches its source file; no overclaiming, and causal verbs flagged only when the compound is the subject), then the LLM check. At most 2 revisions
+- [x] LLM protocol extractor, checked field by field, with the regex as fallback
+- [x] Pause and resume: each run's whole conversation is saved in `runs/`, and it resumes once every question is answered
+- [x] Questions and approvals in `questions/`; inboxes in `messages/`. Contradictions go to the owner who decides, copied to the other owner. Slots go to the requester. Plate plans go to the requester for approval
+- [x] Each run has its own 1M token budget, kept across pause and resume
+- [x] Code renders `findings.md` (plus history and notes for owners) from the reviewed draft, including "What changed since the last run"
+- [x] Run 2: an upload starts a new run for each existing goal, reusing confirmed facts
+- [x] Scripted end-to-end test (`tests/test_harness.py`): run 1 with two owners, approval, run 2. 36 tests pass
+- [x] Live run on DeepSeek (`scripts/live_planted.py`), all goal conditions met:
+  - asked only the threshold (to A) and the plate P2 question (to B, A copied); A's answer about B's file would only have been a comment
+  - run 1: P2 excluded by B, 2.4% drop, p = 0.632, **not a hit**; re-run plan with vehicle on the plate, approved by A; note left for C
+  - run 2: no new questions, P3 added, 3.3% drop, p = 0.267, still not a hit, "what changed" section filled in
+  - about 44k tokens per run, about 3 min for both runs
+- [x] Fixed after the first live run: the Reviewer now sees the SOP text (it had rejected a correct claim citing the SOP), and the Planner no longer states a plan's approval status
 
 ## 5. Streamlit UI
 - [ ] One tab per scientist (`?as=A`, `?as=B`, `?as=C`)

@@ -422,7 +422,9 @@ class Harness:
 
     def _evidence(self, goal: dict) -> dict:
         claims = self.drive.read_json(files.NOTEBOOK_CLAIMS, {}) or {}
-        return {"goal_slots": goal["slots"], "stats": self.drive.read_json(STATS),
+        sops = {f["path"]: self.drive.path(f["path"]).read_text() for f in self.drive.files()
+                if f["path"].startswith("sops/")}
+        return {"goal_slots": goal["slots"], "stats": self.drive.read_json(STATS), "sops": sops,
                 "facts": self.drive.facts(), "contradictions": self.drive.contradictions(),
                 "notebook_claims": {k: v for k, v in claims.items() if k != "code"}}
 

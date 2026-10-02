@@ -39,6 +39,7 @@ How to work:
 5. When run_stats has run, decide the next experiment and draft it with
    plan_followup_plate: "dose_response" if the result meets the threshold, "rerun" if it
    doesn't and plates were excluded or refused. Plans go to a scientist for approval.
+   Don't state a plan's approval status in your conclusion; the findings show it live.
 6. If a notebook reached a different conclusion from yours, say which step differs and
    add a note for its owner.
 7. Finish with submit_conclusion. Every number must name its source file and the key it
